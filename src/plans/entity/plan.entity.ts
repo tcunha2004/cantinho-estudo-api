@@ -5,11 +5,13 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   Unique,
   UpdateDateColumn,
 } from 'typeorm';
 import { RegionEntity } from '../../regions/entity/region.entity';
+import { StudentContractEntity } from '../../student-contracts/entity/student-contract.entity';
 import { Frequency } from '../enums/frequency.enum';
 import { PlanType } from '../enums/plan-type.enum';
 
@@ -66,6 +68,9 @@ export class PlanEntity {
   /* Validade do pacote em meses (2 apenas para o Bronze) */
   @Column({ name: 'validity_months', type: 'int', nullable: true })
   validityMonths: number | null;
+
+  @OneToMany(() => StudentContractEntity, (contract) => contract.plan)
+  contracts: StudentContractEntity[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: string;

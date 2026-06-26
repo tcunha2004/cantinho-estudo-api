@@ -8,6 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { PlanEntity } from '../../plans/entity/plan.entity';
+import { StudentEntity } from '../../students/entity/student.entity';
 
 @Entity({ name: 'regions' })
 export class RegionEntity {
@@ -34,6 +35,9 @@ export class RegionEntity {
 
   @OneToMany(() => PlanEntity, (plan) => plan.region)
   plans: PlanEntity[];
+
+  @OneToMany(() => StudentEntity, (student) => student.region)
+  students: StudentEntity[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: string;
