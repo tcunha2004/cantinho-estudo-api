@@ -29,7 +29,7 @@ export class MyExceptionFilter implements ExceptionFilter {
               status: HttpStatus.CONFLICT,
               body: {
                 statusCode: HttpStatus.CONFLICT,
-                message: 'Database query failed',
+                message: 'Database query failed | ' + exception.message,
                 timestamp: new Date().toISOString(),
                 path: request.url,
               },
