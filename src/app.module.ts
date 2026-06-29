@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { ClassSerializerInterceptor, Module } from '@nestjs/common';
 import { UsersModule } from './users/users.module';
 import { DbConfigService } from './config/db/db.config.service';
 import { ConfigModule } from '@nestjs/config';
@@ -18,6 +18,10 @@ import { MyExceptionFilter } from './filter/exception-filter';
     {
       provide: 'APP_FILTER',
       useClass: MyExceptionFilter,
+    },
+    {
+      provide: 'APP_INTERCEPTOR',
+      useClass: ClassSerializerInterceptor,
     },
   ],
 })
