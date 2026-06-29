@@ -29,7 +29,8 @@ export class MyExceptionFilter implements ExceptionFilter {
               status: HttpStatus.CONFLICT,
               body: {
                 statusCode: HttpStatus.CONFLICT,
-                message: 'Database query failed',
+                message:
+                  'Database query failed | Body payload may be invalid or duplicate',
                 timestamp: new Date().toISOString(),
                 path: request.url,
               },
