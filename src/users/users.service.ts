@@ -13,7 +13,6 @@ export class UsersService {
 
   public async createUser(data: CreateUserDto): Promise<UserEntity> {
     const user = this.userRepository.create(data);
-    await this.userRepository.save(user);
-    return user;
+    return await this.userRepository.save(user);
   }
 }
