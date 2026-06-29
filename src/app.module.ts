@@ -3,6 +3,7 @@ import { UsersModule } from './users/users.module';
 import { DbConfigService } from './config/db/db.config.service';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { MyExceptionFilter } from './filter/exception-filter';
 
 @Module({
   imports: [
@@ -13,6 +14,11 @@ import { TypeOrmModule } from '@nestjs/typeorm';
     UsersModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [
+    {
+      provide: 'APP_FILTER',
+      useClass: MyExceptionFilter,
+    },
+  ],
 })
 export class AppModule {}

@@ -3,7 +3,6 @@ import {
   IsEnum,
   IsNotEmpty,
   IsString,
-  Min,
   MinLength,
 } from 'class-validator';
 
