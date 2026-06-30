@@ -6,6 +6,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { MyExceptionFilter } from './filter/exception-filter';
 import { AuthModule } from './auth/auth.module';
 import { StudentsModule } from './students/students.module';
+import { ClassesModule } from './classes/classes.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { StudentsModule } from './students/students.module';
     UsersModule,
     AuthModule,
     StudentsModule,
+    ClassesModule,
   ],
   providers: [
     {
