@@ -8,7 +8,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
-type UserRole = 'admin' | 'professor' | 'student';
+export type UserRole = 'admin' | 'professor' | 'student';
 
 @Entity({ name: 'users' })
 export class UserEntity {

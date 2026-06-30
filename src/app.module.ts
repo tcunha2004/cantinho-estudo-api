@@ -4,6 +4,7 @@ import { DbConfigService } from './config/db/db.config.service';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MyExceptionFilter } from './filter/exception-filter';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -12,8 +13,8 @@ import { MyExceptionFilter } from './filter/exception-filter';
       useClass: DbConfigService,
     }),
     UsersModule,
+    AuthModule,
   ],
-  controllers: [],
   providers: [
     {
       provide: 'APP_FILTER',

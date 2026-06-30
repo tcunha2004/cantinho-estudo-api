@@ -15,4 +15,8 @@ export class UsersService {
     const user = this.userRepository.create(data);
     return await this.userRepository.save(user);
   }
+
+  public async findByEmail(email: string): Promise<UserEntity | null> {
+    return await this.userRepository.findOne({ where: { email } });
+  }
 }
