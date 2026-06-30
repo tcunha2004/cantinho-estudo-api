@@ -30,6 +30,16 @@ export class RegionEntity {
   })
   enrollmentFee: string;
 
+  /* Comissão paga ao professor por aula concluída nesta região */
+  @Column({
+    name: 'class_commission',
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    nullable: false,
+  })
+  classCommission: string;
+
   @Column({ name: 'active', default: true })
   active: boolean;
 
