@@ -10,4 +10,10 @@ export class ClassesController {
     const count = await this.classesService.countCurrentWeek();
     return { count };
   }
+
+  @Get('current-month/revenue')
+  public async getCurrentMonthRevenue(): Promise<{ revenue: number }> {
+    const revenue = await this.classesService.getCurrentMonthRevenue();
+    return { revenue };
+  }
 }

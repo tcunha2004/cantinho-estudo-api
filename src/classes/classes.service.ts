@@ -2,6 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository } from 'typeorm';
 import { ClassEntity } from './entity/class.entity';
+import { ClassStatus } from './enums/class-status.enum';
+import {
+  getCurrentMonthRange,
+  getCurrentWeekRange,
+} from '../utils/date-range.util';
 
 @Injectable()
 export class ClassesService {
@@ -11,26 +16,29 @@ export class ClassesService {
   ) {}
 
   public async countCurrentWeek(): Promise<number> {
-    const { start, end } = this.getCurrentWeekRange();
+    const { start, end } = getCurrentWeekRange();
 
     return await this.classRepository.count({
       where: { scheduledAt: Between(start, end) },
     });
   }
 
-  /* Retorna o intervalo da semana atual: domingo 00:00:00 até sábado 23:59:59.999 */
-  private getCurrentWeekRange(): { start: string; end: string } {
-    const now = new Date();
-    const dayOfWeek = now.getDay(); // 0 = domingo, 1 = segunda, ... 6 = sábado
+  /*
+   * Receita do mês atual: soma o hour_price do plano de cada aula com status
+   * completed, filtrando pelo scheduled_at dentro do mês.
+   */
+  public async getCurrentMonthRevenue(): Promise<number> {
+    const { start, end } = getCurrentMonthRange();
 
-    const start = new Date(now);
-    start.setDate(now.getDate() - dayOfWeek);
-    start.setHours(0, 0, 0, 0);
+    const result = await this.classRepository
+      .createQueryBuilder('class')
+      .innerJoin('class.studentContract', 'contract')
+      .innerJoin('contract.plan', 'plan')
+      .where('class.status = :status', { status: ClassStatus.COMPLETED })
+      .andWhere('class.scheduledAt BETWEEN :start AND :end', { start, end })
+      .select('COALESCE(SUM(plan.hour_price), 0)', 'revenue')
+      .getRawOne<{ revenue: string }>();
 
-    const end = new Date(start);
-    end.setDate(start.getDate() + 6);
-    end.setHours(23, 59, 59, 999);
-
-    return { start: start.toISOString(), end: end.toISOString() };
+    return Number(result?.revenue ?? 0);
   }
 }
