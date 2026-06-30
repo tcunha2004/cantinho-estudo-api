@@ -5,6 +5,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MyExceptionFilter } from './filter/exception-filter';
 import { AuthModule } from './auth/auth.module';
+import { StudentsModule } from './students/students.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { AuthModule } from './auth/auth.module';
     }),
     UsersModule,
     AuthModule,
+    StudentsModule,
   ],
   providers: [
     {

@@ -1,6 +1,7 @@
 import {
   Column,
   CreateDateColumn,
+  DeleteDateColumn,
   Entity,
   JoinColumn,
   ManyToOne,
@@ -35,6 +36,9 @@ export class StudentEntity {
   @Column({ name: 'address', type: 'text', nullable: true })
   address: string | null;
 
+  @Column({ name: 'active', type: 'boolean', default: true })
+  active: boolean;
+
   @OneToMany(() => StudentContractEntity, (contract) => contract.student)
   contracts: StudentContractEntity[];
 
@@ -43,4 +47,7 @@ export class StudentEntity {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: string;
+
+  @DeleteDateColumn({ name: 'deleted_at' })
+  deletedAt: string;
 }
