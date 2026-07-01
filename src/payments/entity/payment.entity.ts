@@ -23,6 +23,16 @@ export class PaymentEntity {
   @JoinColumn({ name: 'student_contract_id' })
   studentContract: StudentContractEntity;
 
+  /* Valor devido/pago nesta parcela */
+  @Column({
+    name: 'amount',
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    nullable: false,
+  })
+  amount: string;
+
   @Column({ name: 'due_date', type: 'date', nullable: false })
   dueDate: string;
 

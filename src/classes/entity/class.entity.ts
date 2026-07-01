@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
@@ -15,6 +16,10 @@ import { LocationType } from '../enums/location-type.enum';
 import { ClassStatus } from '../enums/class-status.enum';
 
 @Entity({ name: 'classes' })
+/* Acelera as agregações por período (receita do mês, aulas da semana) */
+@Index('idx_classes_status_scheduled_at', ['status', 'scheduledAt'])
+/* Acelera o cruzamento de aulas por professor (ganhos do mês) */
+@Index('idx_classes_teacher_id', ['teacher'])
 export class ClassEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -75,6 +80,20 @@ export class ClassEntity {
     nullable: true,
   })
   commissionAmount: string | null;
+
+  /*
+   * Valor cobrado do aluno pela aula, congelado na conclusão. Já reflete a
+   * duração real da aula e o desconto do contrato — assim a receita histórica
+   * não muda se o preço do plano for alterado depois. Espelha commissionAmount.
+   */
+  @Column({
+    name: 'amount_charged',
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    nullable: true,
+  })
+  amountCharged: string | null;
 
   /* Observações da aula — opcional */
   @Column({ name: 'notes', type: 'text', nullable: true })

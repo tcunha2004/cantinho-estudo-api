@@ -7,6 +7,7 @@ import {
   getCurrentDayRange,
   getCurrentMonthRange,
   getCurrentWeekRange,
+  getMonthRange,
 } from '../utils/date-range.util';
 
 @Injectable()
@@ -25,19 +26,37 @@ export class ClassesService {
   }
 
   /*
-   * Receita do mês atual: soma o hour_price do plano de cada aula com status
-   * completed, filtrando pelo scheduled_at dentro do mês.
+   * Receita do mês atual: soma o valor cobrado (amount_charged, congelado na
+   * conclusão) das aulas completed no mês.
    */
   public async getCurrentMonthRevenue(): Promise<number> {
     const { start, end } = getCurrentMonthRange();
+    return await this.sumRevenue(start, end);
+  }
 
+  /*
+   * Receita de um mês específico (month no formato YYYY-MM): soma o valor
+   * congelado cobrado por cada aula concluída no mês, independente do plano.
+   * Ignora a comissão do professor.
+   */
+  public async getMonthlyRevenue(month: string): Promise<number> {
+    const [year, monthNumber] = month.split('-').map(Number);
+    const { start, end } = getMonthRange(year, monthNumber);
+    return await this.sumRevenue(start, end);
+  }
+
+  /*
+   * Soma o valor cobrado do aluno (amount_charged) das aulas concluídas cujo
+   * scheduled_at está dentro do intervalo. O valor é congelado na conclusão da
+   * aula, já refletindo a duração real e o desconto do contrato — por isso não
+   * há join com plan/contract e a receita histórica é imutável.
+   */
+  private async sumRevenue(start: string, end: string): Promise<number> {
     const result = await this.classRepository
       .createQueryBuilder('class')
-      .innerJoin('class.studentContract', 'contract')
-      .innerJoin('contract.plan', 'plan')
       .where('class.status = :status', { status: ClassStatus.COMPLETED })
       .andWhere('class.scheduledAt BETWEEN :start AND :end', { start, end })
-      .select('COALESCE(SUM(plan.hour_price), 0)', 'revenue')
+      .select('COALESCE(SUM(class.amount_charged), 0)', 'revenue')
       .getRawOne<{ revenue: string }>();
 
     return Number(result?.revenue ?? 0);

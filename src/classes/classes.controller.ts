@@ -1,6 +1,7 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import { ClassesService } from './classes.service';
 import { ClassEntity } from './entity/class.entity';
+import { MonthQueryDto } from '../common/dto/month-query.dto';
 
 @Controller('classes')
 export class ClassesController {
@@ -20,6 +21,14 @@ export class ClassesController {
   @Get('current-month/revenue')
   public async getCurrentMonthRevenue(): Promise<{ revenue: number }> {
     const revenue = await this.classesService.getCurrentMonthRevenue();
+    return { revenue };
+  }
+
+  @Get('monthly-revenue')
+  public async getMonthlyRevenue(
+    @Query() query: MonthQueryDto,
+  ): Promise<{ revenue: number }> {
+    const revenue = await this.classesService.getMonthlyRevenue(query.month);
     return { revenue };
   }
 }
