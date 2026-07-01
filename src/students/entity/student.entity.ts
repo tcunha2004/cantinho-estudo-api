@@ -13,6 +13,7 @@ import {
 import { UserEntity } from '../../users/entity/user.entity';
 import { RegionEntity } from '../../regions/entity/region.entity';
 import { StudentContractEntity } from '../../student-contracts/entity/student-contract.entity';
+import { GuardianEntity } from '../../guardians/entity/guardian.entity';
 
 @Entity({ name: 'students' })
 export class StudentEntity {
@@ -41,6 +42,9 @@ export class StudentEntity {
 
   @OneToMany(() => StudentContractEntity, (contract) => contract.student)
   contracts: StudentContractEntity[];
+
+  @OneToMany(() => GuardianEntity, (guardian) => guardian.student)
+  guardians: GuardianEntity[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: string;

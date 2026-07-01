@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { StudentsModule } from './students/students.module';
 import { ClassesModule } from './classes/classes.module';
 import { StudentContractsModule } from './student-contracts/student-contracts.module';
+import { GuardiansModule } from './guardians/guardians.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { StudentContractsModule } from './student-contracts/student-contracts.mo
     StudentsModule,
     ClassesModule,
     StudentContractsModule,
+    GuardiansModule,
   ],
   providers: [
     {
