@@ -9,6 +9,7 @@ import { StudentsModule } from './students/students.module';
 import { ClassesModule } from './classes/classes.module';
 import { StudentContractsModule } from './student-contracts/student-contracts.module';
 import { GuardiansModule } from './guardians/guardians.module';
+import { TeachersModule } from './teachers/teachers.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { GuardiansModule } from './guardians/guardians.module';
     ClassesModule,
     StudentContractsModule,
     GuardiansModule,
+    TeachersModule,
   ],
   providers: [
     {
