@@ -4,6 +4,7 @@ import { Between, Repository } from 'typeorm';
 import { ClassEntity } from './entity/class.entity';
 import { ClassStatus } from './enums/class-status.enum';
 import {
+  getCurrentDayRange,
   getCurrentMonthRange,
   getCurrentWeekRange,
 } from '../utils/date-range.util';
@@ -40,5 +41,27 @@ export class ClassesService {
       .getRawOne<{ revenue: string }>();
 
     return Number(result?.revenue ?? 0);
+  }
+
+  /*
+   * Próximas aulas de hoje: aulas ainda agendadas cujo scheduled_at está entre
+   * o momento atual e o fim do dia, ordenadas por horário (mais próxima primeiro).
+   */
+  public async getUpcomingClassesToday(): Promise<ClassEntity[]> {
+    const now = new Date();
+    const { end } = getCurrentDayRange(now);
+
+    return await this.classRepository.find({
+      where: {
+        status: ClassStatus.SCHEDULED,
+        scheduledAt: Between(now.toISOString(), end),
+      },
+      relations: {
+        studentContract: { student: true },
+        teacher: true,
+        subject: true,
+      },
+      order: { scheduledAt: 'ASC' },
+    });
   }
 }

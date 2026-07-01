@@ -18,6 +18,17 @@ export function getCurrentWeekRange(now: Date = new Date()): DateRange {
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
+/* Retorna o intervalo do dia atual: 00:00:00 até 23:59:59.999 */
+export function getCurrentDayRange(now: Date = new Date()): DateRange {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
 /* Retorna o intervalo do mês atual: dia 1 00:00:00 até o último dia 23:59:59.999 */
 export function getCurrentMonthRange(now: Date = new Date()): DateRange {
   const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
