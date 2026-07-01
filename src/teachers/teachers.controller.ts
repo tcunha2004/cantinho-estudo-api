@@ -1,7 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { TeachersService } from './teachers.service';
 import { TeacherEarningsQueryDto } from './dto/teacher-earnings-query.dto';
-import { TeacherEarningsDto } from './dto/teacher-earnings.dto';
+import { TeachersEarningsSummaryDto } from './dto/teachers-earnings-summary.dto';
 
 @Controller('teachers')
 export class TeachersController {
@@ -10,7 +10,7 @@ export class TeachersController {
   @Get('all/monthly-earnings')
   public async getAllTeachersEarningsByMonth(
     @Query() query: TeacherEarningsQueryDto,
-  ): Promise<TeacherEarningsDto[]> {
+  ): Promise<TeachersEarningsSummaryDto> {
     return await this.teachersService.getAllTeachersEarningsByMonth(
       query.month,
     );

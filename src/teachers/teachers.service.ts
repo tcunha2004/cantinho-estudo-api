@@ -4,7 +4,7 @@ import { Repository } from 'typeorm';
 import { TeacherEntity } from './entity/teacher.entity';
 import { ClassStatus } from '../classes/enums/class-status.enum';
 import { getMonthRange } from '../utils/date-range.util';
-import { TeacherEarningsDto } from './dto/teacher-earnings.dto';
+import { TeachersEarningsSummaryDto } from './dto/teachers-earnings-summary.dto';
 
 @Injectable()
 export class TeachersService {
@@ -17,11 +17,12 @@ export class TeachersService {
    * Ganhos por professor num mês (month no formato YYYY-MM): para cada
    * professor, conta as aulas com status completed cujo scheduled_at está
    * dentro do mês e soma as comissões congeladas (commission_amount) dessas
-   * aulas. Professores sem aulas concluídas aparecem com 0.
+   * aulas. Professores sem aulas concluídas aparecem com 0. Também retorna os
+   * totais gerais (aulas e valor a pagar) somando todos os professores.
    */
   public async getAllTeachersEarningsByMonth(
     month: string,
-  ): Promise<TeacherEarningsDto[]> {
+  ): Promise<TeachersEarningsSummaryDto> {
     const [year, monthNumber] = month.split('-').map(Number);
     const { start, end } = getMonthRange(year, monthNumber);
 
@@ -48,11 +49,21 @@ export class TeachersService {
         amountToReceive: string;
       }>();
 
-    return rows.map((row) => ({
+    const teachers = rows.map((row) => ({
       id: row.id,
       name: row.name,
       completedClasses: Number(row.completedClasses),
       amountToReceive: row.amountToReceive,
     }));
+
+    const totalCompletedClasses = teachers.reduce(
+      (total, teacher) => total + teacher.completedClasses,
+      0,
+    );
+    const totalAmountToReceive = teachers
+      .reduce((total, teacher) => total + Number(teacher.amountToReceive), 0)
+      .toFixed(2);
+
+    return { totalCompletedClasses, totalAmountToReceive, teachers };
   }
 }
