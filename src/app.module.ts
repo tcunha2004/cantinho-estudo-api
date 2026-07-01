@@ -7,6 +7,7 @@ import { MyExceptionFilter } from './filter/exception-filter';
 import { AuthModule } from './auth/auth.module';
 import { StudentsModule } from './students/students.module';
 import { ClassesModule } from './classes/classes.module';
+import { StudentContractsModule } from './student-contracts/student-contracts.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ClassesModule } from './classes/classes.module';
     AuthModule,
     StudentsModule,
     ClassesModule,
+    StudentContractsModule,
   ],
   providers: [
     {
