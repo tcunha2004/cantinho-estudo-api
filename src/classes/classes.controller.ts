@@ -24,6 +24,16 @@ export class ClassesController {
     );
   }
 
+  @UseGuards(AuthGuard)
+  @Get('teacher/recent-history')
+  public async getRecentHistoryByTeacher(
+    @Req() request: RequestWithUser,
+  ): Promise<ClassEntity[]> {
+    return await this.classesService.getRecentHistoryByTeacher(
+      request.user.sub,
+    );
+  }
+
   @Get('current-week/count')
   public async countCurrentWeek(): Promise<{ count: number }> {
     const count = await this.classesService.countCurrentWeek();

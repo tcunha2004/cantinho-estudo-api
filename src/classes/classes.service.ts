@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, MoreThan, Repository } from 'typeorm';
+import { Between, LessThan, MoreThan, Repository } from 'typeorm';
 import { ClassEntity } from './entity/class.entity';
 import { ClassStatus } from './enums/class-status.enum';
 import {
@@ -105,6 +105,31 @@ export class ClassesService {
         subject: true,
       },
       order: { scheduledAt: 'ASC' },
+    });
+  }
+
+  /*
+   * Histórico recente de um professor: as 5 aulas mais recentes cujo
+   * scheduled_at já passou, ordenadas da mais recente para a mais antiga.
+   * Independe do status — cada aula carrega o seu (completed, cancelled, ...).
+   */
+  public async getRecentHistoryByTeacher(
+    teacherId: string,
+  ): Promise<ClassEntity[]> {
+    const now = new Date();
+
+    return await this.classRepository.find({
+      where: {
+        scheduledAt: LessThan(now.toISOString()),
+        teacher: { id: teacherId },
+      },
+      relations: {
+        studentContract: { student: true },
+        teacher: true,
+        subject: true,
+      },
+      order: { scheduledAt: 'DESC' },
+      take: 5,
     });
   }
 }
