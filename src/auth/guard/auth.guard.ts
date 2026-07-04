@@ -6,9 +6,10 @@ import {
 } from '@nestjs/common';
 import { JwtService, TokenExpiredError } from '@nestjs/jwt';
 import { Request } from 'express';
+import { UserPayload } from '../auth.service';
 
 export interface RequestWithUser extends Request {
-  user: { sub: string; email: string };
+  user: UserPayload;
 }
 
 @Injectable()

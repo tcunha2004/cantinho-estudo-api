@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, Repository } from 'typeorm';
+import { Between, MoreThan, Repository } from 'typeorm';
 import { ClassEntity } from './entity/class.entity';
 import { ClassStatus } from './enums/class-status.enum';
 import {
@@ -74,6 +74,30 @@ export class ClassesService {
       where: {
         status: ClassStatus.SCHEDULED,
         scheduledAt: Between(now.toISOString(), end),
+      },
+      relations: {
+        studentContract: { student: true },
+        teacher: true,
+        subject: true,
+      },
+      order: { scheduledAt: 'ASC' },
+    });
+  }
+
+  /*
+   * Próximas aulas de um professor: aulas ainda agendadas cujo scheduled_at é
+   * posterior ao momento atual, ordenadas por horário (mais próxima primeiro).
+   */
+  public async getUpcomingClassesByTeacher(
+    teacherId: string,
+  ): Promise<ClassEntity[]> {
+    const now = new Date();
+
+    return await this.classRepository.find({
+      where: {
+        status: ClassStatus.SCHEDULED,
+        scheduledAt: MoreThan(now.toISOString()),
+        teacher: { id: teacherId },
       },
       relations: {
         studentContract: { student: true },

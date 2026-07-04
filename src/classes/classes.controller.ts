@@ -1,7 +1,9 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { ClassesService } from './classes.service';
 import { ClassEntity } from './entity/class.entity';
 import { MonthQueryDto } from '../common/dto/month-query.dto';
+import { AuthGuard } from 'src/auth/guard/auth.guard';
+import type { RequestWithUser } from 'src/auth/guard/auth.guard';
 
 @Controller('classes')
 export class ClassesController {
@@ -10,6 +12,16 @@ export class ClassesController {
   @Get('today/upcoming')
   public async getUpcomingClassesToday(): Promise<ClassEntity[]> {
     return await this.classesService.getUpcomingClassesToday();
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('teacher/upcoming')
+  public async getUpcomingClassesByTeacher(
+    @Req() request: RequestWithUser,
+  ): Promise<ClassEntity[]> {
+    return await this.classesService.getUpcomingClassesByTeacher(
+      request.user.sub,
+    );
   }
 
   @Get('current-week/count')
