@@ -1,17 +1,21 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { FindOptionsRelations, Repository } from 'typeorm';
 import { StudentEntity } from './entity/student.entity';
 import { StudentContractEntity } from '../student-contracts/entity/student-contract.entity';
 import { GuardianEntity } from '../guardians/entity/guardian.entity';
+import { PlanEntity } from '../plans/entity/plan.entity';
 import { ActiveStudentDto } from './dto/active-student.dto';
 import { StudentPlanDto } from './dto/student-plan.dto';
+import { PlanSummaryDto } from './dto/plan-summary.dto';
 
 @Injectable()
 export class StudentsService {
   constructor(
     @InjectRepository(StudentEntity)
     private readonly studentRepository: Repository<StudentEntity>,
+    @InjectRepository(PlanEntity)
+    private readonly planRepository: Repository<PlanEntity>,
   ) {}
 
   public async countActive(): Promise<number> {
@@ -43,20 +47,16 @@ export class StudentsService {
   }
 
   /*
-   * Plano de um aluno: retorna todos os dados do plano do contrato mais recente
-   * do aluno (tipo, preços, frequência, região, ...) junto com o contexto do
-   * contrato (status, vigência e desconto aplicado). Lança 404 se o aluno não
-   * existir ou não tiver nenhum contrato.
+   * Plano do aluno autenticado (userId = sub do token): retorna todos os dados
+   * do plano do contrato mais recente do aluno (tipo, preços, frequência,
+   * região, ...) junto com o contexto do contrato (status, vigência e desconto
+   * aplicado). Lança 404 se o aluno não existir ou não tiver nenhum contrato.
    */
-  public async findStudentPlan(studentId: string): Promise<StudentPlanDto> {
-    const student = await this.studentRepository.findOne({
-      where: { id: studentId },
-      relations: { user: true, contracts: { plan: { region: true } } },
+  public async findStudentPlan(userId: string): Promise<StudentPlanDto> {
+    const student = await this.findStudentByUserId(userId, {
+      user: true,
+      contracts: { plan: { region: true } },
     });
-
-    if (!student) {
-      throw new NotFoundException('Aluno não encontrado');
-    }
 
     const contract = this.pickCurrentContract(student.contracts);
 
@@ -82,6 +82,54 @@ export class StudentsService {
       endDate: contract.endDate,
       discountPercentage: contract.discountPercentage,
     };
+  }
+
+  /*
+   * Outros planos disponíveis para o aluno autenticado: os principais dados dos
+   * planos da região do aluno, exceto o plano do seu contrato atual. Se o aluno
+   * não tiver contrato, retorna todos os planos da região. Ordenados pelo preço
+   * mensal (crescente).
+   */
+  public async findOtherPlans(userId: string): Promise<PlanSummaryDto[]> {
+    const student = await this.findStudentByUserId(userId, {
+      region: true,
+      contracts: { plan: true },
+    });
+
+    const currentPlanId = this.pickCurrentContract(student.contracts)?.plan.id;
+
+    const plans = await this.planRepository.find({
+      where: { region: { id: student.region.id } },
+      order: { monthlyPrice: 'ASC' },
+    });
+
+    return plans
+      .filter((plan) => plan.id !== currentPlanId)
+      .map((plan) => ({
+        planType: plan.planType,
+        frequency: plan.frequency,
+        monthlyPrice: plan.monthlyPrice,
+        hourPrice: plan.hourPrice,
+        classesCount: plan.classesCount,
+        validityMonths: plan.validityMonths,
+      }));
+  }
+
+  /* Busca o aluno pelo id do usuário (sub do token). Lança 404 se não existir. */
+  private async findStudentByUserId(
+    userId: string,
+    relations: FindOptionsRelations<StudentEntity>,
+  ): Promise<StudentEntity> {
+    const student = await this.studentRepository.findOne({
+      where: { user: { id: userId } },
+      relations,
+    });
+
+    if (!student) {
+      throw new NotFoundException('Aluno não encontrado');
+    }
+
+    return student;
   }
 
   /* Responsável financeiro, com fallback para o primeiro responsável. */
