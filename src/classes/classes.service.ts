@@ -109,6 +109,51 @@ export class ClassesService {
   }
 
   /*
+   * Quantidade de aulas que um professor teve num mês (month no formato
+   * YYYY-MM): conta as aulas com status completed cujo scheduled_at está dentro
+   * do mês — ou seja, as aulas que de fato aconteceram.
+   */
+  public async countMonthlyByTeacher(
+    teacherId: string,
+    month: string,
+  ): Promise<number> {
+    const [year, monthNumber] = month.split('-').map(Number);
+    const { start, end } = getMonthRange(year, monthNumber);
+
+    return await this.classRepository.count({
+      where: {
+        status: ClassStatus.COMPLETED,
+        scheduledAt: Between(start, end),
+        teacher: { id: teacherId },
+      },
+    });
+  }
+
+  /*
+   * Valor que um professor tem a receber num mês (month no formato YYYY-MM):
+   * soma a comissão congelada (commission_amount) das aulas completed do
+   * professor cujo scheduled_at está dentro do mês.
+   */
+  public async sumMonthlyEarningsByTeacher(
+    teacherId: string,
+    month: string,
+  ): Promise<number> {
+    const [year, monthNumber] = month.split('-').map(Number);
+    const { start, end } = getMonthRange(year, monthNumber);
+
+    const result = await this.classRepository
+      .createQueryBuilder('class')
+      .innerJoin('class.teacher', 'teacher')
+      .where('class.status = :status', { status: ClassStatus.COMPLETED })
+      .andWhere('class.scheduledAt BETWEEN :start AND :end', { start, end })
+      .andWhere('teacher.id = :teacherId', { teacherId })
+      .select('COALESCE(SUM(class.commission_amount), 0)', 'amountToReceive')
+      .getRawOne<{ amountToReceive: string }>();
+
+    return Number(result?.amountToReceive ?? 0);
+  }
+
+  /*
    * Histórico recente de um professor: as 5 aulas mais recentes cujo
    * scheduled_at já passou, ordenadas da mais recente para a mais antiga.
    * Independe do status — cada aula carrega o seu (completed, cancelled, ...).

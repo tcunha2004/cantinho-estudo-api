@@ -34,6 +34,33 @@ export class ClassesController {
     );
   }
 
+  @UseGuards(AuthGuard)
+  @Get('teacher/monthly-count')
+  public async countMonthlyByTeacher(
+    @Req() request: RequestWithUser,
+    @Query() query: MonthQueryDto,
+  ): Promise<{ count: number }> {
+    const count = await this.classesService.countMonthlyByTeacher(
+      request.user.sub,
+      query.month,
+    );
+    return { count };
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('teacher/monthly-earnings')
+  public async sumMonthlyEarningsByTeacher(
+    @Req() request: RequestWithUser,
+    @Query() query: MonthQueryDto,
+  ): Promise<{ amountToReceive: number }> {
+    const amountToReceive =
+      await this.classesService.sumMonthlyEarningsByTeacher(
+        request.user.sub,
+        query.month,
+      );
+    return { amountToReceive };
+  }
+
   @Get('current-week/count')
   public async countCurrentWeek(): Promise<{ count: number }> {
     const count = await this.classesService.countCurrentWeek();
