@@ -1,6 +1,7 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
 import { StudentsService } from './students.service';
 import { ActiveStudentDto } from './dto/active-student.dto';
+import { StudentPlanDto } from './dto/student-plan.dto';
 
 @Controller('students')
 export class StudentsController {
@@ -15,5 +16,12 @@ export class StudentsController {
   @Get('active')
   public async findAllActive(): Promise<ActiveStudentDto[]> {
     return await this.studentsService.findAllActive();
+  }
+
+  @Get(':id/plan')
+  public async findStudentPlan(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<StudentPlanDto> {
+    return await this.studentsService.findStudentPlan(id);
   }
 }
