@@ -2,6 +2,7 @@ import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { ClassesService } from './classes.service';
 import { ClassEntity } from './entity/class.entity';
 import { MonthQueryDto } from '../common/dto/month-query.dto';
+import { WeeklyClassCountDto } from './dto/weekly-class-count.dto';
 import { AuthGuard } from 'src/auth/guard/auth.guard';
 import type { RequestWithUser } from 'src/auth/guard/auth.guard';
 
@@ -59,6 +60,18 @@ export class ClassesController {
         query.month,
       );
     return { amountToReceive };
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('teacher/weekly-count')
+  public async countWeeklyByTeacher(
+    @Req() request: RequestWithUser,
+    @Query() query: MonthQueryDto,
+  ): Promise<WeeklyClassCountDto[]> {
+    return await this.classesService.countWeeklyByTeacher(
+      request.user.sub,
+      query.month,
+    );
   }
 
   @Get('current-week/count')

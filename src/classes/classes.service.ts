@@ -9,6 +9,7 @@ import {
   getCurrentWeekRange,
   getMonthRange,
 } from '../utils/date-range.util';
+import { WeeklyClassCountDto } from './dto/weekly-class-count.dto';
 
 @Injectable()
 export class ClassesService {
@@ -151,6 +152,44 @@ export class ClassesService {
       .getRawOne<{ amountToReceive: string }>();
 
     return Number(result?.amountToReceive ?? 0);
+  }
+
+  /*
+   * Aulas por semana de um mês (month no formato YYYY-MM) de um professor.
+   * O mês é dividido em blocos fixos de 7 dias a partir do dia 1 (semana 1 =
+   * dias 1–7, semana 2 = 8–14, ...; a última semana pode ser parcial) e conta
+   * todas as aulas do professor com scheduled_at em cada semana, independente
+   * do status. Semanas sem aulas retornam count null.
+   */
+  public async countWeeklyByTeacher(
+    teacherId: string,
+    month: string,
+  ): Promise<WeeklyClassCountDto[]> {
+    const [year, monthNumber] = month.split('-').map(Number);
+    const { start, end } = getMonthRange(year, monthNumber);
+
+    const rows = await this.classRepository
+      .createQueryBuilder('class')
+      .innerJoin('class.teacher', 'teacher')
+      .where('teacher.id = :teacherId', { teacherId })
+      .andWhere('class.scheduledAt BETWEEN :start AND :end', { start, end })
+      .select('class.scheduledAt', 'scheduledAt')
+      .getRawMany<{ scheduledAt: string | Date }>();
+
+    const daysInMonth = new Date(year, monthNumber, 0).getDate();
+    const totalWeeks = Math.ceil(daysInMonth / 7);
+    const counts = new Array<number>(totalWeeks).fill(0);
+
+    for (const row of rows) {
+      const dayOfMonth = new Date(row.scheduledAt).getDate();
+      const weekIndex = Math.ceil(dayOfMonth / 7) - 1;
+      counts[weekIndex] += 1;
+    }
+
+    return counts.map((count, index) => ({
+      week: index + 1,
+      count: count === 0 ? null : count,
+    }));
   }
 
   /*
