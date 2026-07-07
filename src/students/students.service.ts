@@ -5,9 +5,11 @@ import { StudentEntity } from './entity/student.entity';
 import { StudentContractEntity } from '../student-contracts/entity/student-contract.entity';
 import { GuardianEntity } from '../guardians/entity/guardian.entity';
 import { PlanEntity } from '../plans/entity/plan.entity';
+import { PaymentEntity } from '../payments/entity/payment.entity';
 import { ActiveStudentDto } from './dto/active-student.dto';
 import { StudentPlanDto } from './dto/student-plan.dto';
 import { PlanSummaryDto } from './dto/plan-summary.dto';
+import { PaymentHistoryDto } from './dto/payment-history.dto';
 
 @Injectable()
 export class StudentsService {
@@ -16,6 +18,8 @@ export class StudentsService {
     private readonly studentRepository: Repository<StudentEntity>,
     @InjectRepository(PlanEntity)
     private readonly planRepository: Repository<PlanEntity>,
+    @InjectRepository(PaymentEntity)
+    private readonly paymentRepository: Repository<PaymentEntity>,
   ) {}
 
   public async countActive(): Promise<number> {
@@ -113,6 +117,34 @@ export class StudentsService {
         classesCount: plan.classesCount,
         validityMonths: plan.validityMonths,
       }));
+  }
+
+  /*
+   * Histórico de pagamentos do aluno autenticado (userId = sub do token):
+   * todas as parcelas de todos os contratos do aluno, com valor, vencimento,
+   * data de pagamento e status, junto com o tipo do plano do contrato de cada
+   * parcela. Ordenado pelo vencimento (mais recente primeiro). Lança 404 se o
+   * aluno não existir.
+   */
+  public async findPaymentHistory(
+    userId: string,
+  ): Promise<PaymentHistoryDto[]> {
+    const student = await this.findStudentByUserId(userId, {});
+
+    const payments = await this.paymentRepository.find({
+      where: { studentContract: { student: { id: student.id } } },
+      relations: { studentContract: { plan: true } },
+      order: { dueDate: 'DESC' },
+    });
+
+    return payments.map((payment) => ({
+      id: payment.id,
+      amount: payment.amount,
+      dueDate: payment.dueDate,
+      paidAt: payment.paidAt,
+      status: payment.status,
+      planType: payment.studentContract.plan.planType,
+    }));
   }
 
   /* Busca o aluno pelo id do usuário (sub do token). Lança 404 se não existir. */
