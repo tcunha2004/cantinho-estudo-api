@@ -8,8 +8,8 @@ export class AuthController {
 
   @Post('login')
   async login(
-    @Body() { email, password }: LoginDto,
+    @Body() { email, password, role }: LoginDto,
   ): Promise<{ access_token: string }> {
-    return this.authService.login({ email, password });
+    return this.authService.login({ email, password, role });
   }
 }

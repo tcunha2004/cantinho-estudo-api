@@ -25,8 +25,9 @@ export class AuthService {
   public async login({
     email,
     password,
+    role,
   }: LoginDto): Promise<{ access_token: string }> {
-    const user = await this.userService.findByEmail(email);
+    const user = await this.userService.findByEmailAndRole(email, role);
 
     const userAuthenticated = await bcrypt.compare(
       password,
