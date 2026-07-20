@@ -60,9 +60,10 @@ export class TeachersService {
       (total, teacher) => total + teacher.completedClasses,
       0,
     );
-    const totalAmountToReceive = teachers
-      .reduce((total, teacher) => total + Number(teacher.amountToReceive), 0)
-      .toFixed(2);
+    const totalAmountToReceive = teachers.reduce(
+      (total, teacher) => total + Number(teacher.amountToReceive),
+      0,
+    );
 
     return { totalCompletedClasses, totalAmountToReceive, teachers };
   }
