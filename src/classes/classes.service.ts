@@ -77,8 +77,8 @@ export class ClassesService {
         scheduledAt: Between(now.toISOString(), end),
       },
       relations: {
-        studentContract: { student: true },
-        teacher: true,
+        studentContract: { student: { user: true } },
+        teacher: { user: true },
         subject: true,
       },
       order: { scheduledAt: 'ASC' },
@@ -101,8 +101,8 @@ export class ClassesService {
         teacher: { id: teacherId },
       },
       relations: {
-        studentContract: { student: true },
-        teacher: true,
+        studentContract: { student: { user: true } },
+        teacher: { user: true },
         subject: true,
       },
       order: { scheduledAt: 'ASC' },
@@ -208,8 +208,8 @@ export class ClassesService {
         teacher: { id: teacherId },
       },
       relations: {
-        studentContract: { student: true },
-        teacher: true,
+        studentContract: { student: { user: true } },
+        teacher: { user: true },
         subject: true,
       },
       order: { scheduledAt: 'DESC' },
