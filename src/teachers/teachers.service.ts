@@ -17,7 +17,8 @@ export class TeachersService {
    * Ganhos por professor num mês (month no formato YYYY-MM): para cada
    * professor, conta as aulas com status completed cujo scheduled_at está
    * dentro do mês e soma as comissões congeladas (commission_amount) dessas
-   * aulas. Professores sem aulas concluídas aparecem com 0. Também retorna os
+   * aulas. Professores sem aulas concluídas aparecem com 0. Cada professor
+   * traz também suas disciplinas e o valor por aula do mês. Também retorna os
    * totais gerais (aulas e valor a pagar) somando todos os professores.
    */
   public async getAllTeachersEarningsByMonth(
@@ -37,6 +38,19 @@ export class TeachersService {
       )
       .select('teacher.id', 'id')
       .addSelect('user.name', 'name')
+      /*
+       * Subconsulta em vez de join: as disciplinas são N:N e um join
+       * multiplicaria as linhas, inflando a contagem de aulas e a soma das
+       * comissões.
+       */
+      .addSelect(
+        `(SELECT STRING_AGG(subject.name, ', ' ORDER BY subject.name)
+            FROM teacher_subjects teacher_subject
+            INNER JOIN subjects subject
+              ON subject.id = teacher_subject.subject_id
+           WHERE teacher_subject.teacher_id = teacher.id)`,
+        'subject',
+      )
       .addSelect('COUNT(class.id)', 'completedClasses')
       .addSelect('COALESCE(SUM(class.commission_amount), 0)', 'amountToReceive')
       .groupBy('teacher.id')
@@ -45,23 +59,33 @@ export class TeachersService {
       .getRawMany<{
         id: string;
         name: string;
+        subject: string | null;
         completedClasses: string;
         amountToReceive: string;
       }>();
 
-    const teachers = rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      completedClasses: Number(row.completedClasses),
-      amountToReceive: row.amountToReceive,
-    }));
+    const teachers = rows.map((row) => {
+      const completedClasses = Number(row.completedClasses);
+      const amountToReceive = Number(row.amountToReceive);
+
+      return {
+        id: row.id,
+        name: row.name,
+        subject: row.subject ?? '',
+        completedClasses,
+        amountToReceive,
+        amountPerClass: completedClasses
+          ? amountToReceive / completedClasses
+          : 0,
+      };
+    });
 
     const totalCompletedClasses = teachers.reduce(
       (total, teacher) => total + teacher.completedClasses,
       0,
     );
     const totalAmountToReceive = teachers.reduce(
-      (total, teacher) => total + Number(teacher.amountToReceive),
+      (total, teacher) => total + teacher.amountToReceive,
       0,
     );
 
