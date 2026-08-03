@@ -88,9 +88,12 @@ export class ClassesService {
   /*
    * Próximas aulas de um professor: aulas ainda agendadas cujo scheduled_at é
    * posterior ao momento atual, ordenadas por horário (mais próxima primeiro).
+   *
+   * O filtro atravessa a relação até users porque quem chega do token é o id do
+   * usuário logado (payload.sub), não o id da linha em `teachers`.
    */
   public async getUpcomingClassesByTeacher(
-    teacherId: string,
+    userId: string,
   ): Promise<ClassEntity[]> {
     const now = new Date();
 
@@ -98,7 +101,7 @@ export class ClassesService {
       where: {
         status: ClassStatus.SCHEDULED,
         scheduledAt: MoreThan(now.toISOString()),
-        teacher: { id: teacherId },
+        teacher: { user: { id: userId } },
       },
       relations: {
         studentContract: { student: { user: true } },
@@ -115,7 +118,7 @@ export class ClassesService {
    * do mês — ou seja, as aulas que de fato aconteceram.
    */
   public async countMonthlyByTeacher(
-    teacherId: string,
+    userId: string,
     month: string,
   ): Promise<number> {
     const [year, monthNumber] = month.split('-').map(Number);
@@ -125,7 +128,7 @@ export class ClassesService {
       where: {
         status: ClassStatus.COMPLETED,
         scheduledAt: Between(start, end),
-        teacher: { id: teacherId },
+        teacher: { user: { id: userId } },
       },
     });
   }
@@ -136,7 +139,7 @@ export class ClassesService {
    * professor cujo scheduled_at está dentro do mês.
    */
   public async sumMonthlyEarningsByTeacher(
-    teacherId: string,
+    userId: string,
     month: string,
   ): Promise<number> {
     const [year, monthNumber] = month.split('-').map(Number);
@@ -145,9 +148,10 @@ export class ClassesService {
     const result = await this.classRepository
       .createQueryBuilder('class')
       .innerJoin('class.teacher', 'teacher')
+      .innerJoin('teacher.user', 'user')
       .where('class.status = :status', { status: ClassStatus.COMPLETED })
       .andWhere('class.scheduledAt BETWEEN :start AND :end', { start, end })
-      .andWhere('teacher.id = :teacherId', { teacherId })
+      .andWhere('user.id = :userId', { userId })
       .select('COALESCE(SUM(class.commission_amount), 0)', 'amountToReceive')
       .getRawOne<{ amountToReceive: string }>();
 
@@ -162,7 +166,7 @@ export class ClassesService {
    * do status. Semanas sem aulas retornam count null.
    */
   public async countWeeklyByTeacher(
-    teacherId: string,
+    userId: string,
     month: string,
   ): Promise<WeeklyClassCountDto[]> {
     const [year, monthNumber] = month.split('-').map(Number);
@@ -171,7 +175,8 @@ export class ClassesService {
     const rows = await this.classRepository
       .createQueryBuilder('class')
       .innerJoin('class.teacher', 'teacher')
-      .where('teacher.id = :teacherId', { teacherId })
+      .innerJoin('teacher.user', 'user')
+      .where('user.id = :userId', { userId })
       .andWhere('class.scheduledAt BETWEEN :start AND :end', { start, end })
       .select('class.scheduledAt', 'scheduledAt')
       .getRawMany<{ scheduledAt: string | Date }>();
@@ -198,14 +203,14 @@ export class ClassesService {
    * Independe do status — cada aula carrega o seu (completed, cancelled, ...).
    */
   public async getRecentHistoryByTeacher(
-    teacherId: string,
+    userId: string,
   ): Promise<ClassEntity[]> {
     const now = new Date();
 
     return await this.classRepository.find({
       where: {
         scheduledAt: LessThan(now.toISOString()),
-        teacher: { id: teacherId },
+        teacher: { user: { id: userId } },
       },
       relations: {
         studentContract: { student: { user: true } },
