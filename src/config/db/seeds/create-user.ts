@@ -12,8 +12,7 @@ import { StudentEntity } from '../../../students/entity/student.entity';
  * dá TRUNCATE em tudo. Serve para abrir um acesso rápido durante o
  * desenvolvimento.
  *
- *   npm run user:create -- --name "Maria Souza" --email maria@escola.com \
- *     --password Senha123 --role professor
+ *   npm run user:create -- --name "Maria Souza" --email maria@escola.com --password Senha123 --role professor
  *
  * Papéis professor e student também ganham o registro em `teachers` /
  * `students`: sem ele o login funciona, mas as telas do papel ficam vazias,
