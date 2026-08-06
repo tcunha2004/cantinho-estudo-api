@@ -21,6 +21,7 @@
     "seed": "dotenv -e .env.local -- env TS_NODE_PROJECT=tsconfig.migration.json ts-node src/config/db/seeds/seed.ts",
     "user:create": "dotenv -e .env.local -- env TS_NODE_PROJECT=tsconfig.migration.json ts-node src/config/db/seeds/create-user.ts",
     "classes:create": "dotenv -e .env.local -- env TS_NODE_PROJECT=tsconfig.migration.json ts-node src/config/db/seeds/create-classes.ts",
+    "contract:create": "dotenv -e .env.local -- env TS_NODE_PROJECT=tsconfig.migration.json ts-node src/config/db/seeds/create-contract.ts",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
