@@ -41,3 +41,56 @@ export function getMonthRange(year: number, month: number): DateRange {
 export function getCurrentMonthRange(now: Date = new Date()): DateRange {
   return getMonthRange(now.getFullYear(), now.getMonth() + 1);
 }
+
+/*
+ * ─── Horário ingênuo (sem fuso) ────────────────────────────────────────────
+ *
+ * `classes.scheduled_at` é `timestamp` SEM fuso e todas as linhas foram
+ * gravadas em hora local ("2026-08-10 14:30:00"). Chamar `toISOString()` nesse
+ * caminho desloca tudo pelo offset do fuso, então a agenda trabalha com strings
+ * ingênuas de ponta a ponta: entra ingênuo, compara ingênuo, sai ingênuo.
+ */
+
+function pad(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+/* Normaliza 'YYYY-MM-DDTHH:mm[:ss]' (formato do input do navegador) para 'YYYY-MM-DD HH:mm:ss' */
+export function toNaiveTimestamp(value: string): string {
+  const [date, time] = value.split(/[T ]/);
+  const [hour, minute, second = '00'] = time.split(':');
+
+  return `${date} ${hour}:${minute}:${second}`;
+}
+
+/* Formata o que veio do banco (Date ou string) como 'YYYY-MM-DDTHH:mm:ss', sem sufixo de fuso */
+export function toNaiveIso(value: Date | string): string {
+  if (typeof value === 'string') {
+    const [date, time] = value.split(/[T ]/);
+    return `${date}T${time.slice(0, 8)}`;
+  }
+
+  const date = `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+  const time = `${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
+
+  return `${date}T${time}`;
+}
+
+/* Soma minutos a um horário ingênuo, devolvendo outro horário ingênuo */
+export function addMinutesToNaive(value: string, minutes: number): string {
+  const [date, time] = value.split(/[T ]/);
+  const [year, month, day] = date.split('-').map(Number);
+  const [hour, minute, second = 0] = time.split(':').map(Number);
+
+  const result = new Date(year, month - 1, day, hour, minute + minutes, second);
+
+  return toNaiveIso(result);
+}
+
+/*
+ * Intervalo ingênuo cobrindo os dias informados (from/to no formato YYYY-MM-DD):
+ * do início do primeiro dia ao fim do último.
+ */
+export function getNaiveDayRange(from: string, to: string): DateRange {
+  return { start: `${from} 00:00:00`, end: `${to} 23:59:59.999` };
+}
