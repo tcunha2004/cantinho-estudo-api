@@ -3,10 +3,13 @@ export class TeacherEarningsDto {
   name: string;
   /* Disciplinas do professor separadas por vírgula (vazio quando não há) */
   subject: string;
-  /* Quantidade de aulas concluídas no mês */
+  /*
+   * Aulas cobráveis do mês: as realizadas e as faltas sem aviso — nas duas o
+   * professor recebe. O nome do campo é histórico; a tela mostra "Aulas no mês".
+   */
   completedClasses: number;
-  /* Total a receber no mês (soma das comissões das aulas concluídas) */
+  /* Total a receber no mês (soma das comissões das aulas cobráveis) */
   amountToReceive: number;
-  /* Valor por aula no mês (0 quando não houve aulas concluídas) */
+  /* Valor por aula no mês (0 quando não houve aulas cobráveis) */
   amountPerClass: number;
 }

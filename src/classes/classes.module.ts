@@ -3,9 +3,17 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ClassesService } from './classes.service';
 import { ClassesController } from './classes.controller';
 import { ClassEntity } from './entity/class.entity';
+import { StudentContractEntity } from '../student-contracts/entity/student-contract.entity';
+import { TeacherEntity } from '../teachers/entity/teacher.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ClassEntity])],
+  imports: [
+    TypeOrmModule.forFeature([
+      ClassEntity,
+      StudentContractEntity,
+      TeacherEntity,
+    ]),
+  ],
   controllers: [ClassesController],
   providers: [ClassesService],
 })

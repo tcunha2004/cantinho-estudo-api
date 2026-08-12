@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TeacherEntity } from './entity/teacher.entity';
-import { ClassStatus } from '../classes/enums/class-status.enum';
+import { BILLABLE_STATUSES } from '../classes/enums/class-status.enum';
 import { getMonthRange } from '../utils/date-range.util';
 import { TeachersEarningsSummaryDto } from './dto/teachers-earnings-summary.dto';
 
@@ -33,8 +33,8 @@ export class TeachersService {
       .leftJoin(
         'teacher.classes',
         'class',
-        'class.status = :status AND class.scheduledAt BETWEEN :start AND :end',
-        { status: ClassStatus.COMPLETED, start, end },
+        'class.status IN (:...billable) AND class.scheduledAt BETWEEN :start AND :end',
+        { billable: BILLABLE_STATUSES, start, end },
       )
       .select('teacher.id', 'id')
       .addSelect('user.name', 'name')
