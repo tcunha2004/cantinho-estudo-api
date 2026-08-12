@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { StudentEntity } from '../../students/entity/student.entity';
+import { naiveTimestampTransformer } from '../../utils/date-range.util';
 
 @Entity({ name: 'guardians' })
 export class GuardianEntity {
@@ -41,10 +42,16 @@ export class GuardianEntity {
   })
   isFinancialResponsible: boolean;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({
+    name: 'created_at',
+    transformer: naiveTimestampTransformer,
+  })
   createdAt: string;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({
+    name: 'updated_at',
+    transformer: naiveTimestampTransformer,
+  })
   updatedAt: string;
 
   @DeleteDateColumn({ name: 'deleted_at' })

@@ -20,6 +20,7 @@ import { PaymentStatus } from '../../../payments/enums/payment-status.enum';
 import { ClassStatus } from '../../../classes/enums/class-status.enum';
 import { LocationType } from '../../../classes/enums/location-type.enum';
 import { TargetRole } from '../../../invite-links/enums/target-role.enum';
+import { nowNaive } from '../../../utils/date-range.util';
 
 /*
  * Seed de dados fictícios do Cantinho do Estudo.
@@ -614,7 +615,12 @@ async function truncateAll(ds: DataSource): Promise<void> {
 }
 
 async function seed(ds: DataSource): Promise<void> {
-  const now = new Date();
+  /*
+   * Ancorado na hora de parede de São Paulo (nowNaive), não no relógio do
+   * processo: garante que o dataset gerado no container (UTC) seja igual ao
+   * gerado numa máquina de desenvolvimento local.
+   */
+  const now = new Date(nowNaive());
   const today = at(now, 0);
 
   /* ---------------- regiões ---------------- */
@@ -974,18 +980,11 @@ async function seed(ds: DataSource): Promise<void> {
   /*
    * Garante conteúdo em GET /classes/today/upcoming independentemente da hora
    * em que o seed rodar: três aulas hoje, à frente do horário atual.
-   *
-   * O endpoint compara scheduled_at (timestamp sem fuso, gravado em hora local)
-   * com now.toISOString() — ou seja, com o horário já convertido para UTC. Na
-   * prática o corte acontece em "agora + offset do fuso", então as aulas são
-   * posicionadas depois desse corte para de fato aparecerem na listagem.
    */
   const activeContracts = await contractRepository.find({
     where: { status: ContractStatus.ACTIVE },
     relations: { student: { region: true, user: true }, plan: true },
   });
-
-  const cutoff = new Date(now.getTime() + now.getTimezoneOffset() * 60 * 1000);
 
   const todayClasses: ClassEntity[] = [];
   for (let index = 0; index < 3; index += 1) {
@@ -994,9 +993,7 @@ async function seed(ds: DataSource): Promise<void> {
       (item) => item.email === contract.student.user.email,
     )!;
     const subjectName = pick(studentSeed.subjects);
-    const scheduledAt = new Date(
-      cutoff.getTime() + (45 + index * 60) * 60 * 1000,
-    );
+    const scheduledAt = new Date(now.getTime() + (45 + index * 60) * 60 * 1000);
 
     todayClasses.push(
       classRepository.create({

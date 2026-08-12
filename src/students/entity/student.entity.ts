@@ -14,6 +14,7 @@ import { UserEntity } from '../../users/entity/user.entity';
 import { RegionEntity } from '../../regions/entity/region.entity';
 import { StudentContractEntity } from '../../student-contracts/entity/student-contract.entity';
 import { GuardianEntity } from '../../guardians/entity/guardian.entity';
+import { naiveTimestampTransformer } from '../../utils/date-range.util';
 
 @Entity({ name: 'students' })
 export class StudentEntity {
@@ -46,10 +47,16 @@ export class StudentEntity {
   @OneToMany(() => GuardianEntity, (guardian) => guardian.student)
   guardians: GuardianEntity[];
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({
+    name: 'created_at',
+    transformer: naiveTimestampTransformer,
+  })
   createdAt: string;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({
+    name: 'updated_at',
+    transformer: naiveTimestampTransformer,
+  })
   updatedAt: string;
 
   @DeleteDateColumn({ name: 'deleted_at' })

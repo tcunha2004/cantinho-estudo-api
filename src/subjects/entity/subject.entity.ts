@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { TeacherEntity } from '../../teachers/entity/teacher.entity';
 import { ClassEntity } from '../../classes/entity/class.entity';
+import { naiveTimestampTransformer } from '../../utils/date-range.util';
 
 @Entity({ name: 'subjects' })
 export class SubjectEntity {
@@ -23,6 +24,9 @@ export class SubjectEntity {
   @OneToMany(() => ClassEntity, (cls) => cls.subject)
   classes: ClassEntity[];
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({
+    name: 'created_at',
+    transformer: naiveTimestampTransformer,
+  })
   createdAt: string;
 }

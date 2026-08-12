@@ -25,6 +25,7 @@ import {
   getCurrentWeekRange,
   getMonthRange,
   getNaiveDayRange,
+  nowNaive,
   toNaiveIso,
   toNaiveTimestamp,
 } from '../utils/date-range.util';
@@ -127,13 +128,12 @@ export class ClassesService {
    * o momento atual e o fim do dia, ordenadas por horário (mais próxima primeiro).
    */
   public async getUpcomingClassesToday(): Promise<ClassEntity[]> {
-    const now = new Date();
-    const { end } = getCurrentDayRange(now);
+    const { end } = getCurrentDayRange();
 
     return await this.classRepository.find({
       where: {
         status: ClassStatus.SCHEDULED,
-        scheduledAt: Between(now.toISOString(), end),
+        scheduledAt: Between(nowNaive(), end),
       },
       relations: {
         studentContract: { student: { user: true } },
@@ -154,12 +154,10 @@ export class ClassesService {
   public async getUpcomingClassesByTeacher(
     userId: string,
   ): Promise<ClassEntity[]> {
-    const now = new Date();
-
     return await this.classRepository.find({
       where: {
         status: ClassStatus.SCHEDULED,
-        scheduledAt: MoreThan(now.toISOString()),
+        scheduledAt: MoreThan(nowNaive()),
         teacher: { user: { id: userId } },
       },
       relations: {
@@ -246,7 +244,7 @@ export class ClassesService {
     const counts = new Array<number>(totalWeeks).fill(0);
 
     for (const row of rows) {
-      const dayOfMonth = new Date(row.scheduledAt).getDate();
+      const dayOfMonth = Number(toNaiveIso(row.scheduledAt).slice(8, 10));
       const weekIndex = Math.ceil(dayOfMonth / 7) - 1;
       counts[weekIndex] += 1;
     }
@@ -265,11 +263,9 @@ export class ClassesService {
   public async getRecentHistoryByTeacher(
     userId: string,
   ): Promise<ClassEntity[]> {
-    const now = new Date();
-
     return await this.classRepository.find({
       where: {
-        scheduledAt: LessThan(now.toISOString()),
+        scheduledAt: LessThan(nowNaive()),
         teacher: { user: { id: userId } },
       },
       relations: {
@@ -526,7 +522,7 @@ export class ClassesService {
 
     this.assertScheduled(item, 'encerrar');
 
-    if (toNaiveIso(item.scheduledAt) > toNaiveIso(new Date())) {
+    if (toNaiveIso(item.scheduledAt) > nowNaive()) {
       throw new BadRequestException(
         'Só é possível encerrar uma aula depois do horário de início',
       );

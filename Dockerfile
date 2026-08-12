@@ -1,5 +1,8 @@
 FROM node:24-alpine AS builder
 
+RUN apk add --no-cache tzdata
+ENV TZ=America/Sao_Paulo
+
 WORKDIR /app
 
 COPY package*.json ./
@@ -9,6 +12,9 @@ COPY . .
 RUN npm run build
 
 FROM node:24-alpine
+
+RUN apk add --no-cache tzdata
+ENV TZ=America/Sao_Paulo
 
 WORKDIR /app
 
