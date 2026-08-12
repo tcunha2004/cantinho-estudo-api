@@ -8,6 +8,7 @@ import {
 } from 'typeorm';
 import { UserEntity } from '../../users/entity/user.entity';
 import { TargetRole } from '../enums/target-role.enum';
+import { naiveTimestampTransformer } from '../../utils/date-range.util';
 
 @Entity({ name: 'invite_links' })
 export class InviteLinkEntity {
@@ -39,12 +40,20 @@ export class InviteLinkEntity {
   })
   discountPercentage: string | null;
 
-  @Column({ name: 'expires_at', type: 'timestamp', nullable: false })
+  @Column({
+    name: 'expires_at',
+    type: 'timestamp',
+    nullable: false,
+    transformer: naiveTimestampTransformer,
+  })
   expiresAt: string;
 
   @Column({ name: 'used', default: false })
   used: boolean;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({
+    name: 'created_at',
+    transformer: naiveTimestampTransformer,
+  })
   createdAt: string;
 }

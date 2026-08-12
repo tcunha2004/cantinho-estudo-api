@@ -13,6 +13,7 @@ import {
 import { UserEntity } from '../../users/entity/user.entity';
 import { SubjectEntity } from '../../subjects/entity/subject.entity';
 import { ClassEntity } from '../../classes/entity/class.entity';
+import { naiveTimestampTransformer } from '../../utils/date-range.util';
 
 @Entity({ name: 'teachers' })
 export class TeacherEntity {
@@ -38,9 +39,15 @@ export class TeacherEntity {
   @OneToMany(() => ClassEntity, (cls) => cls.teacher)
   classes: ClassEntity[];
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({
+    name: 'created_at',
+    transformer: naiveTimestampTransformer,
+  })
   createdAt: string;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({
+    name: 'updated_at',
+    transformer: naiveTimestampTransformer,
+  })
   updatedAt: string;
 }

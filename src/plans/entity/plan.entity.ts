@@ -14,6 +14,7 @@ import { RegionEntity } from '../../regions/entity/region.entity';
 import { StudentContractEntity } from '../../student-contracts/entity/student-contract.entity';
 import { Frequency } from '../enums/frequency.enum';
 import { PlanType } from '../enums/plan-type.enum';
+import { naiveTimestampTransformer } from '../../utils/date-range.util';
 
 @Entity({ name: 'plans' })
 @Unique('uq_plan', ['region', 'planType', 'frequency'])
@@ -72,10 +73,16 @@ export class PlanEntity {
   @OneToMany(() => StudentContractEntity, (contract) => contract.plan)
   contracts: StudentContractEntity[];
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({
+    name: 'created_at',
+    transformer: naiveTimestampTransformer,
+  })
   createdAt: string;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({
+    name: 'updated_at',
+    transformer: naiveTimestampTransformer,
+  })
   updatedAt: string;
 
   @DeleteDateColumn({ name: 'deleted_at' })

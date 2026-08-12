@@ -14,6 +14,7 @@ import { SubjectEntity } from '../../subjects/entity/subject.entity';
 import { RegionEntity } from '../../regions/entity/region.entity';
 import { LocationType } from '../enums/location-type.enum';
 import { ClassStatus } from '../enums/class-status.enum';
+import { naiveTimestampTransformer } from '../../utils/date-range.util';
 
 @Entity({ name: 'classes' })
 /* Acelera as agregações por período (receita do mês, aulas da semana) */
@@ -24,11 +25,9 @@ export class ClassEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(
-    () => StudentContractEntity,
-    (contract) => contract.classes,
-    { nullable: false },
-  )
+  @ManyToOne(() => StudentContractEntity, (contract) => contract.classes, {
+    nullable: false,
+  })
   @JoinColumn({ name: 'student_contract_id' })
   studentContract: StudentContractEntity;
 
@@ -49,7 +48,12 @@ export class ClassEntity {
   @JoinColumn({ name: 'region_id' })
   region: RegionEntity | null;
 
-  @Column({ name: 'scheduled_at', type: 'timestamp', nullable: false })
+  @Column({
+    name: 'scheduled_at',
+    type: 'timestamp',
+    nullable: false,
+    transformer: naiveTimestampTransformer,
+  })
   scheduledAt: string;
 
   @Column({ name: 'duration_minutes', type: 'int', default: 60 })
@@ -99,9 +103,15 @@ export class ClassEntity {
   @Column({ name: 'notes', type: 'text', nullable: true })
   notes: string | null;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({
+    name: 'created_at',
+    transformer: naiveTimestampTransformer,
+  })
   createdAt: string;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({
+    name: 'updated_at',
+    transformer: naiveTimestampTransformer,
+  })
   updatedAt: string;
 }

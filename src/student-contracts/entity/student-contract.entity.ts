@@ -13,6 +13,7 @@ import { PlanEntity } from '../../plans/entity/plan.entity';
 import { ClassEntity } from '../../classes/entity/class.entity';
 import { PaymentEntity } from '../../payments/entity/payment.entity';
 import { ContractStatus } from '../enums/contract-status.enum';
+import { naiveTimestampTransformer } from '../../utils/date-range.util';
 
 @Entity({ name: 'student_contracts' })
 export class StudentContractEntity {
@@ -60,9 +61,15 @@ export class StudentContractEntity {
   @OneToMany(() => PaymentEntity, (payment) => payment.studentContract)
   payments: PaymentEntity[];
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({
+    name: 'created_at',
+    transformer: naiveTimestampTransformer,
+  })
   createdAt: string;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({
+    name: 'updated_at',
+    transformer: naiveTimestampTransformer,
+  })
   updatedAt: string;
 }

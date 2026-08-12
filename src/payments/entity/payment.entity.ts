@@ -9,17 +9,16 @@ import {
 } from 'typeorm';
 import { StudentContractEntity } from '../../student-contracts/entity/student-contract.entity';
 import { PaymentStatus } from '../enums/payment-status.enum';
+import { naiveTimestampTransformer } from '../../utils/date-range.util';
 
 @Entity({ name: 'payments' })
 export class PaymentEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(
-    () => StudentContractEntity,
-    (contract) => contract.payments,
-    { nullable: false },
-  )
+  @ManyToOne(() => StudentContractEntity, (contract) => contract.payments, {
+    nullable: false,
+  })
   @JoinColumn({ name: 'student_contract_id' })
   studentContract: StudentContractEntity;
 
@@ -37,7 +36,12 @@ export class PaymentEntity {
   dueDate: string;
 
   /* Nulo se ainda não pago */
-  @Column({ name: 'paid_at', type: 'timestamp', nullable: true })
+  @Column({
+    name: 'paid_at',
+    type: 'timestamp',
+    nullable: true,
+    transformer: naiveTimestampTransformer,
+  })
   paidAt: string | null;
 
   @Column({
@@ -48,9 +52,15 @@ export class PaymentEntity {
   })
   status: PaymentStatus;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({
+    name: 'created_at',
+    transformer: naiveTimestampTransformer,
+  })
   createdAt: string;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({
+    name: 'updated_at',
+    transformer: naiveTimestampTransformer,
+  })
   updatedAt: string;
 }

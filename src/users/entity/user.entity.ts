@@ -7,6 +7,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { naiveTimestampTransformer } from '../../utils/date-range.util';
 
 export type UserRole = 'admin' | 'professor' | 'student';
 
@@ -33,10 +34,16 @@ export class UserEntity {
   @Column({ name: 'role', nullable: false })
   role: UserRole;
 
-  @CreateDateColumn({ name: 'created_at' })
+  @CreateDateColumn({
+    name: 'created_at',
+    transformer: naiveTimestampTransformer,
+  })
   createdAt: string;
 
-  @UpdateDateColumn({ name: 'updated_at' })
+  @UpdateDateColumn({
+    name: 'updated_at',
+    transformer: naiveTimestampTransformer,
+  })
   updatedAt: string;
 
   @DeleteDateColumn({ name: 'deleted_at' })
