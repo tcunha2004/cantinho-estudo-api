@@ -67,7 +67,7 @@ Opcionais:
 Exemplos:
   npm run contract:create -- --email caio@escola.com
   npm run contract:create -- --email caio@escola.com --plan-type prata --discount 10
-  npm run contract:create -- --email caio@escola.com --start 2026-01-01 --status expired
+  npm run contract:create -- --email caio@escola.com --start 2026-01-01 --status cancelled
   npm run contract:create -- --email caio@escola.com --plan-type ouro --frequency 5 --expire-current yes
 `.trim();
 
@@ -483,7 +483,7 @@ async function handleExistingContracts(
   );
 
   const expired = active.map((contract) => {
-    contract.status = ContractStatus.EXPIRED;
+    contract.status = ContractStatus.CANCELLED;
     /* Não estica um fim que já era anterior ao novo contrato */
     contract.endDate =
       contract.endDate && contract.endDate < endDate
