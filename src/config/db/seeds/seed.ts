@@ -45,6 +45,9 @@ const ADMIN = {
 /* Senha de todos os usuários fictícios (professores e alunos) */
 const FAKE_PASSWORD = 'Senha123';
 
+/* Senha das contas de teste (@teste.com), uma por papel: admin, professor e aluno */
+const TEST_ACCOUNTS_PASSWORD = 'teste123';
+
 /* Quantos meses de histórico de aulas/pagamentos gerar */
 const HISTORY_MONTHS = 4;
 
@@ -153,88 +156,297 @@ function token(): string {
  * Dados base
  * ------------------------------------------------------------------ */
 
+/*
+ * Aula no Cantinho sempre usa a tabela desta região, não a do bairro do aluno
+ * — mesma constante usada em ClassesService.
+ */
+const CANTINHO_REGION_SLUG = 'cantinho';
+
+/* Tabela comercial vigente (confirmada pelo Thiago) — ver PRECIFICACAO-POR-REGIAO.md */
 const REGIONS = [
   {
-    name: 'Centro',
-    slug: 'centro',
-    enrollmentFee: 150,
-    classCommission: 35,
-    priceFactor: 1,
+    name: 'Vila da Serra',
+    slug: 'vila-da-serra',
+    enrollmentFee: 200,
+    classCommission: 85,
     active: true,
   },
   {
-    name: 'Zona Sul',
-    slug: 'zona-sul',
-    enrollmentFee: 180,
-    classCommission: 40,
-    priceFactor: 1.15,
+    name: 'Centro-Sul',
+    slug: 'centro-sul',
+    enrollmentFee: 200,
+    classCommission: 75,
     active: true,
   },
   {
-    name: 'Zona Norte',
-    slug: 'zona-norte',
-    enrollmentFee: 120,
-    classCommission: 30,
-    priceFactor: 0.9,
+    name: 'Cid. Nova e Região',
+    slug: 'cidade-nova',
+    enrollmentFee: 165,
+    classCommission: 55,
+    active: true,
+  },
+  {
+    name: 'Cantinho',
+    slug: CANTINHO_REGION_SLUG,
+    enrollmentFee: 165,
+    classCommission: 47,
     active: true,
   },
 ];
 
-/* Tabela de preços base (Centro) — as outras regiões aplicam o priceFactor */
-const PLAN_TEMPLATES = [
+/*
+ * Dias da semana em que cada tipo/frequência de plano acontece — usado só
+ * para distribuir as aulas geradas, não varia por região.
+ */
+const PLAN_WEEKDAYS = [
   {
     planType: PlanType.OURO,
     frequency: Frequency.FIVE_TIMES_WEEK,
-    monthlyPrice: 1200,
-    hourPrice: 60,
-    classesCount: 20,
-    validityMonths: null,
     weekdays: [1, 2, 3, 4, 5],
   },
   {
     planType: PlanType.OURO,
     frequency: Frequency.THREE_TIMES_WEEK,
-    monthlyPrice: 780,
-    hourPrice: 65,
-    classesCount: 12,
-    validityMonths: null,
     weekdays: [1, 3, 5],
   },
   {
     planType: PlanType.OURO,
     frequency: Frequency.TWICE_WEEK,
-    monthlyPrice: 560,
-    hourPrice: 70,
-    classesCount: 8,
-    validityMonths: null,
     weekdays: [2, 4],
   },
+  { planType: PlanType.PRATA, frequency: null, weekdays: [3] },
+  { planType: PlanType.BRONZE, frequency: null, weekdays: [6] },
+  { planType: PlanType.AVULSA, frequency: null, weekdays: [5] },
+];
+
+/* Tabela oficial de preços — 6 planos por região, 24 no total */
+const PLANS: {
+  regionSlug: string;
+  planType: PlanType;
+  frequency: Frequency | null;
+  monthlyPrice: number;
+  hourPrice: number;
+  classesCount: number;
+  validityMonths: number | null;
+}[] = [
   {
+    regionSlug: 'vila-da-serra',
+    planType: PlanType.OURO,
+    frequency: Frequency.TWICE_WEEK,
+    monthlyPrice: 1320,
+    hourPrice: 165,
+    classesCount: 8,
+    validityMonths: null,
+  },
+  {
+    regionSlug: 'vila-da-serra',
+    planType: PlanType.OURO,
+    frequency: Frequency.THREE_TIMES_WEEK,
+    monthlyPrice: 1860,
+    hourPrice: 155,
+    classesCount: 12,
+    validityMonths: null,
+  },
+  {
+    regionSlug: 'vila-da-serra',
+    planType: PlanType.OURO,
+    frequency: Frequency.FIVE_TIMES_WEEK,
+    monthlyPrice: 2900,
+    hourPrice: 145,
+    classesCount: 20,
+    validityMonths: null,
+  },
+  {
+    regionSlug: 'vila-da-serra',
     planType: PlanType.PRATA,
     frequency: null,
-    monthlyPrice: 400,
-    hourPrice: 75,
-    classesCount: 5,
+    monthlyPrice: 1800,
+    hourPrice: 180,
+    classesCount: 10,
     validityMonths: null,
-    weekdays: [3],
   },
   {
+    regionSlug: 'vila-da-serra',
     planType: PlanType.BRONZE,
     frequency: null,
-    monthlyPrice: 260,
-    hourPrice: 85,
-    classesCount: 3,
+    monthlyPrice: 2000,
+    hourPrice: 200,
+    classesCount: 10,
     validityMonths: 2,
-    weekdays: [6],
   },
   {
+    regionSlug: 'vila-da-serra',
+    planType: PlanType.AVULSA,
+    frequency: null,
+    monthlyPrice: 220,
+    hourPrice: 220,
+    classesCount: 1,
+    validityMonths: null,
+  },
+
+  {
+    regionSlug: 'centro-sul',
+    planType: PlanType.OURO,
+    frequency: Frequency.TWICE_WEEK,
+    monthlyPrice: 1080,
+    hourPrice: 135,
+    classesCount: 8,
+    validityMonths: null,
+  },
+  {
+    regionSlug: 'centro-sul',
+    planType: PlanType.OURO,
+    frequency: Frequency.THREE_TIMES_WEEK,
+    monthlyPrice: 1500,
+    hourPrice: 125,
+    classesCount: 12,
+    validityMonths: null,
+  },
+  {
+    regionSlug: 'centro-sul',
+    planType: PlanType.OURO,
+    frequency: Frequency.FIVE_TIMES_WEEK,
+    monthlyPrice: 2300,
+    hourPrice: 115,
+    classesCount: 20,
+    validityMonths: null,
+  },
+  {
+    regionSlug: 'centro-sul',
+    planType: PlanType.PRATA,
+    frequency: null,
+    monthlyPrice: 1550,
+    hourPrice: 155,
+    classesCount: 10,
+    validityMonths: null,
+  },
+  {
+    regionSlug: 'centro-sul',
+    planType: PlanType.BRONZE,
+    frequency: null,
+    monthlyPrice: 1750,
+    hourPrice: 175,
+    classesCount: 10,
+    validityMonths: 2,
+  },
+  {
+    regionSlug: 'centro-sul',
+    planType: PlanType.AVULSA,
+    frequency: null,
+    monthlyPrice: 200,
+    hourPrice: 200,
+    classesCount: 1,
+    validityMonths: null,
+  },
+
+  {
+    regionSlug: 'cidade-nova',
+    planType: PlanType.OURO,
+    frequency: Frequency.TWICE_WEEK,
+    monthlyPrice: 760,
+    hourPrice: 95,
+    classesCount: 8,
+    validityMonths: null,
+  },
+  {
+    regionSlug: 'cidade-nova',
+    planType: PlanType.OURO,
+    frequency: Frequency.THREE_TIMES_WEEK,
+    monthlyPrice: 1020,
+    hourPrice: 85,
+    classesCount: 12,
+    validityMonths: null,
+  },
+  {
+    regionSlug: 'cidade-nova',
+    planType: PlanType.OURO,
+    frequency: Frequency.FIVE_TIMES_WEEK,
+    monthlyPrice: 1500,
+    hourPrice: 75,
+    classesCount: 20,
+    validityMonths: null,
+  },
+  {
+    regionSlug: 'cidade-nova',
+    planType: PlanType.PRATA,
+    frequency: null,
+    monthlyPrice: 1100,
+    hourPrice: 110,
+    classesCount: 10,
+    validityMonths: null,
+  },
+  {
+    regionSlug: 'cidade-nova',
+    planType: PlanType.BRONZE,
+    frequency: null,
+    monthlyPrice: 1250,
+    hourPrice: 125,
+    classesCount: 10,
+    validityMonths: 2,
+  },
+  {
+    regionSlug: 'cidade-nova',
+    planType: PlanType.AVULSA,
+    frequency: null,
+    monthlyPrice: 150,
+    hourPrice: 150,
+    classesCount: 1,
+    validityMonths: null,
+  },
+
+  {
+    regionSlug: CANTINHO_REGION_SLUG,
+    planType: PlanType.OURO,
+    frequency: Frequency.TWICE_WEEK,
+    monthlyPrice: 600,
+    hourPrice: 75,
+    classesCount: 8,
+    validityMonths: null,
+  },
+  {
+    regionSlug: CANTINHO_REGION_SLUG,
+    planType: PlanType.OURO,
+    frequency: Frequency.THREE_TIMES_WEEK,
+    monthlyPrice: 840,
+    hourPrice: 70,
+    classesCount: 12,
+    validityMonths: null,
+  },
+  {
+    regionSlug: CANTINHO_REGION_SLUG,
+    planType: PlanType.OURO,
+    frequency: Frequency.FIVE_TIMES_WEEK,
+    monthlyPrice: 1300,
+    hourPrice: 65,
+    classesCount: 20,
+    validityMonths: null,
+  },
+  {
+    regionSlug: CANTINHO_REGION_SLUG,
+    planType: PlanType.PRATA,
+    frequency: null,
+    monthlyPrice: 850,
+    hourPrice: 85,
+    classesCount: 10,
+    validityMonths: null,
+  },
+  {
+    regionSlug: CANTINHO_REGION_SLUG,
+    planType: PlanType.BRONZE,
+    frequency: null,
+    monthlyPrice: 900,
+    hourPrice: 90,
+    classesCount: 10,
+    validityMonths: 2,
+  },
+  {
+    regionSlug: CANTINHO_REGION_SLUG,
     planType: PlanType.AVULSA,
     frequency: null,
     monthlyPrice: 100,
     hourPrice: 100,
     classesCount: 1,
     validityMonths: null,
-    weekdays: [5],
   },
 ];
 
@@ -287,6 +499,12 @@ const TEACHERS = [
     bio: 'Engenheiro de formação, dá aulas de exatas há 5 anos com foco em olimpíadas escolares.',
     subjects: ['Matemática', 'Física', 'Química'],
   },
+  {
+    name: 'Professor Teste',
+    email: 'prof@teste.com',
+    bio: 'Conta de teste para desenvolvimento.',
+    subjects: ['Matemática', 'Português'],
+  },
 ];
 
 interface StudentSeed {
@@ -309,8 +527,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Lucas Ferreira Souza',
     email: 'lucas.souza@example.com',
-    region: 'centro',
-    address: null,
+    region: 'vila-da-serra',
+    address: 'Rua Augusta, 1200 — Consolação',
     active: true,
     planType: PlanType.OURO,
     frequency: Frequency.THREE_TIMES_WEEK,
@@ -326,7 +544,7 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Maria Clara Dias',
     email: 'maria.dias@example.com',
-    region: 'zona-sul',
+    region: 'centro-sul',
     address: 'Rua Joaquim Nabuco, 421 — Brooklin',
     active: true,
     planType: PlanType.OURO,
@@ -340,7 +558,7 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Pedro Henrique Barros',
     email: 'pedro.barros@example.com',
-    region: 'zona-norte',
+    region: 'cidade-nova',
     address: 'Av. Água Fria, 1210 — Santana',
     active: true,
     planType: PlanType.PRATA,
@@ -354,8 +572,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Beatriz Almeida Rocha',
     email: 'beatriz.rocha@example.com',
-    region: 'centro',
-    address: null,
+    region: 'cantinho',
+    address: 'Rua Oscar Freire, 540 — Jardins',
     active: true,
     planType: PlanType.OURO,
     frequency: Frequency.TWICE_WEEK,
@@ -368,8 +586,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Gabriel Martins Costa',
     email: 'gabriel.costa@example.com',
-    region: 'zona-sul',
-    address: null,
+    region: 'vila-da-serra',
+    address: 'Av. Paulista, 900 — Bela Vista',
     active: true,
     planType: PlanType.BRONZE,
     frequency: null,
@@ -382,7 +600,7 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Isabela Nunes Teixeira',
     email: 'isabela.teixeira@example.com',
-    region: 'centro',
+    region: 'centro-sul',
     address: 'Rua Aurora, 88 — Santa Ifigênia',
     active: true,
     planType: PlanType.OURO,
@@ -399,8 +617,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Enzo Gabriel Pereira',
     email: 'enzo.pereira@example.com',
-    region: 'zona-norte',
-    address: null,
+    region: 'cidade-nova',
+    address: 'Rua do Paraíso, 233 — Paraíso',
     active: true,
     planType: PlanType.PRATA,
     frequency: null,
@@ -413,7 +631,7 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Sophia Carvalho Lima',
     email: 'sophia.lima@example.com',
-    region: 'zona-sul',
+    region: 'cantinho',
     address: 'Rua dos Pinheiros, 733 — Pinheiros',
     active: true,
     planType: PlanType.OURO,
@@ -427,8 +645,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Miguel Santos Oliveira',
     email: 'miguel.oliveira@example.com',
-    region: 'centro',
-    address: null,
+    region: 'vila-da-serra',
+    address: 'Rua Vergueiro, 1500 — Liberdade',
     active: true,
     planType: PlanType.AVULSA,
     frequency: null,
@@ -441,7 +659,7 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Helena Ribeiro Campos',
     email: 'helena.campos@example.com',
-    region: 'zona-norte',
+    region: 'centro-sul',
     address: 'Rua Voluntários da Pátria, 2540 — Santana',
     active: true,
     planType: PlanType.OURO,
@@ -455,8 +673,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Arthur Mendes Fonseca',
     email: 'arthur.fonseca@example.com',
-    region: 'centro',
-    address: null,
+    region: 'cidade-nova',
+    address: 'Rua Haddock Lobo, 300 — Cerqueira César',
     active: true,
     planType: PlanType.PRATA,
     frequency: null,
@@ -469,8 +687,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Laura Vasconcelos Pinto',
     email: 'laura.pinto@example.com',
-    region: 'zona-sul',
-    address: null,
+    region: 'cantinho',
+    address: 'Av. Ibirapuera, 2500 — Moema',
     active: true,
     planType: PlanType.OURO,
     frequency: Frequency.FIVE_TIMES_WEEK,
@@ -486,7 +704,7 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Bernardo Azevedo Cruz',
     email: 'bernardo.cruz@example.com',
-    region: 'zona-norte',
+    region: 'vila-da-serra',
     address: 'Av. Engenheiro Caetano Álvares, 900 — Casa Verde',
     active: true,
     planType: PlanType.BRONZE,
@@ -500,8 +718,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Alice Monteiro Farias',
     email: 'alice.farias@example.com',
-    region: 'centro',
-    address: null,
+    region: 'centro-sul',
+    address: 'Rua Bela Cintra, 800 — Consolação',
     active: true,
     planType: PlanType.OURO,
     frequency: Frequency.TWICE_WEEK,
@@ -514,7 +732,7 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Theo Cardoso Batista',
     email: 'theo.batista@example.com',
-    region: 'zona-sul',
+    region: 'cidade-nova',
     address: 'Rua Gomes de Carvalho, 155 — Vila Olímpia',
     active: true,
     planType: PlanType.PRATA,
@@ -528,8 +746,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Manuela Freitas Andrade',
     email: 'manuela.andrade@example.com',
-    region: 'zona-norte',
-    address: null,
+    region: 'cantinho',
+    address: 'Rua Tutóia, 450 — Vila Mariana',
     active: true,
     planType: PlanType.OURO,
     frequency: Frequency.THREE_TIMES_WEEK,
@@ -542,8 +760,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Davi Lucca Ramos',
     email: 'davi.ramos@example.com',
-    region: 'centro',
-    address: null,
+    region: 'vila-da-serra',
+    address: 'Rua Cardeal Arcoverde, 1100 — Pinheiros',
     active: false,
     planType: PlanType.PRATA,
     frequency: null,
@@ -556,8 +774,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Cecília Duarte Moreira',
     email: 'cecilia.moreira@example.com',
-    region: 'zona-sul',
-    address: null,
+    region: 'centro-sul',
+    address: 'Rua Girassol, 420 — Vila Madalena',
     active: false,
     planType: PlanType.BRONZE,
     frequency: null,
@@ -570,7 +788,7 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Noah Siqueira Barbosa',
     email: 'noah.barbosa@example.com',
-    region: 'centro',
+    region: 'cidade-nova',
     address: 'Rua Maria Antônia, 310 — Vila Buarque',
     active: true,
     planType: PlanType.AVULSA,
@@ -584,8 +802,8 @@ const STUDENTS: StudentSeed[] = [
   {
     name: 'Valentina Rezende Pires',
     email: 'valentina.pires@example.com',
-    region: 'zona-norte',
-    address: null,
+    region: 'cantinho',
+    address: 'Alameda Santos, 900 — Jardim Paulista',
     active: true,
     planType: PlanType.OURO,
     frequency: Frequency.TWICE_WEEK,
@@ -594,6 +812,20 @@ const STUDENTS: StudentSeed[] = [
     discountPercentage: null,
     subjects: ['Redação', 'Geografia'],
     guardians: [{ name: 'Michele Rezende', financial: true }],
+  },
+  {
+    name: 'Aluno Teste',
+    email: 'aluno@teste.com',
+    region: 'cantinho',
+    address: 'Rua de Teste, 100 — Cantinho',
+    active: true,
+    planType: PlanType.OURO,
+    frequency: Frequency.THREE_TIMES_WEEK,
+    startedMonthsAgo: 3,
+    contractStatus: ContractStatus.ACTIVE,
+    discountPercentage: null,
+    subjects: ['Matemática', 'Português'],
+    guardians: [{ name: 'Responsável Teste', financial: true }],
   },
 ];
 
@@ -643,18 +875,15 @@ async function seed(ds: DataSource): Promise<void> {
 
   const planRepository = ds.getRepository(PlanEntity);
   const plans = await planRepository.save(
-    REGIONS.flatMap((regionSeed) =>
-      PLAN_TEMPLATES.map((template) => {
-        const region = regionBySlug.get(regionSeed.slug)!;
-        return planRepository.create({
-          region,
-          planType: template.planType,
-          frequency: template.frequency,
-          monthlyPrice: money(template.monthlyPrice * regionSeed.priceFactor),
-          hourPrice: money(template.hourPrice * regionSeed.priceFactor),
-          classesCount: template.classesCount,
-          validityMonths: template.validityMonths,
-        });
+    PLANS.map((planSeed) =>
+      planRepository.create({
+        region: regionBySlug.get(planSeed.regionSlug)!,
+        planType: planSeed.planType,
+        frequency: planSeed.frequency,
+        monthlyPrice: money(planSeed.monthlyPrice),
+        hourPrice: money(planSeed.hourPrice),
+        classesCount: planSeed.classesCount,
+        validityMonths: planSeed.validityMonths,
       }),
     ),
   );
@@ -690,12 +919,16 @@ async function seed(ds: DataSource): Promise<void> {
 
   const userRepository = ds.getRepository(UserEntity);
   const fakePasswordHash = await hash(FAKE_PASSWORD);
+  const testPasswordHash = await hash(TEST_ACCOUNTS_PASSWORD);
 
+  /* Contas @teste.com (admin/professor/aluno) usam a senha fixa de teste */
   const createUser = (name: string, email: string, role: UserRole) =>
     userRepository.create({
       name,
       email,
-      password: fakePasswordHash,
+      password: email.endsWith('@teste.com')
+        ? testPasswordHash
+        : fakePasswordHash,
       role,
     });
 
@@ -706,6 +939,10 @@ async function seed(ds: DataSource): Promise<void> {
       password: await hash(ADMIN.password),
       role: 'admin',
     }),
+  );
+
+  await userRepository.save(
+    createUser('Admin Teste', 'admin@teste.com', 'admin'),
   );
 
   const secondaryAdmin = await userRepository.save(
@@ -757,11 +994,10 @@ async function seed(ds: DataSource): Promise<void> {
   let totalPayments = 0;
   const allClasses: ClassEntity[] = [];
 
+  const cantinhoRegion = regionBySlug.get(CANTINHO_REGION_SLUG)!;
+
   for (const studentSeed of STUDENTS) {
     const region = regionBySlug.get(studentSeed.region)!;
-    const regionSeed = REGIONS.find(
-      (item) => item.slug === studentSeed.region,
-    )!;
 
     const user = await userRepository.save(
       createUser(studentSeed.name, studentSeed.email, 'student'),
@@ -794,7 +1030,7 @@ async function seed(ds: DataSource): Promise<void> {
     const plan = planByKey.get(
       planKey(studentSeed.region, studentSeed.planType, studentSeed.frequency),
     )!;
-    const template = PLAN_TEMPLATES.find(
+    const weekdaysConfig = PLAN_WEEKDAYS.find(
       (item) =>
         item.planType === studentSeed.planType &&
         item.frequency === studentSeed.frequency,
@@ -810,8 +1046,8 @@ async function seed(ds: DataSource): Promise<void> {
     );
 
     /* Bronze tem validade de 2 meses; os outros planos são contínuos */
-    const endDate = template.validityMonths
-      ? at(addMonths(startDate, template.validityMonths), 0)
+    const endDate = plan.validityMonths
+      ? at(addMonths(startDate, plan.validityMonths), 0)
       : studentSeed.contractStatus === ContractStatus.CANCELLED
         ? at(addMonths(startDate, 3), 0)
         : null;
@@ -908,8 +1144,6 @@ async function seed(ds: DataSource): Promise<void> {
           ? addDays(today, FUTURE_DAYS)
           : today;
 
-    const hourPrice = Number(plan.hourPrice);
-    const commissionPerHour = regionSeed.classCommission;
     const classes: ClassEntity[] = [];
 
     for (
@@ -918,7 +1152,7 @@ async function seed(ds: DataSource): Promise<void> {
       day = addDays(day, 1)
     ) {
       const weekday = day.getDay();
-      if (!template.weekdays.includes(weekday)) continue;
+      if (!weekdaysConfig.weekdays.includes(weekday)) continue;
 
       /* Avulsa: aula esporádica, não toda semana */
       if (studentSeed.planType === PlanType.AVULSA && !chance(0.4)) continue;
@@ -951,20 +1185,38 @@ async function seed(ds: DataSource): Promise<void> {
       const hours = durationMinutes / 60;
       const completed = status === ClassStatus.COMPLETED;
 
+      /*
+       * Região da aula: no Cantinho (school) é sempre a região Cantinho, não a
+       * do bairro do aluno; na casa do aluno (home) é a região dele. O valor
+       * cobrado vem do plano equivalente (mesmo tipo/frequência) nessa região
+       * — mesma regra de ClassesService.finalize().
+       */
+      const classRegionSlug =
+        locationType === LocationType.HOME
+          ? studentSeed.region
+          : CANTINHO_REGION_SLUG;
+      const classRegion =
+        locationType === LocationType.HOME ? region : cantinhoRegion;
+      const classPlan = planByKey.get(
+        planKey(classRegionSlug, studentSeed.planType, studentSeed.frequency),
+      )!;
+
       classes.push(
         classRepository.create({
           studentContract: contract,
           teacher,
           subject,
           /* Região e valores só são congelados quando a aula é concluída */
-          region: completed ? region : null,
+          region: completed ? classRegion : null,
           scheduledAt: toTimestampString(scheduledAt),
           durationMinutes,
           locationType,
           status,
-          commissionAmount: completed ? money(commissionPerHour * hours) : null,
+          commissionAmount: completed
+            ? money(Number(classRegion.classCommission) * hours)
+            : null,
           amountCharged: completed
-            ? money(hourPrice * hours * (1 - discount))
+            ? money(Number(classPlan.hourPrice) * hours * (1 - discount))
             : null,
           notes: completed && chance(0.25) ? pick(CLASS_NOTES) : null,
         }),
@@ -1066,7 +1318,7 @@ async function seed(ds: DataSource): Promise<void> {
   console.log(`  planos.............. ${plans.length}`);
   console.log(`  disciplinas......... ${subjects.length}`);
   console.log(
-    `  usuários............ ${2 + TEACHERS.length + STUDENTS.length}`,
+    `  usuários............ ${3 + TEACHERS.length + STUDENTS.length}`,
   );
   console.log(`  professores......... ${teachers.length}`);
   console.log(`  alunos.............. ${STUDENTS.length}`);
@@ -1079,6 +1331,9 @@ async function seed(ds: DataSource): Promise<void> {
   console.log(`  links de convite.... ${invites.length}`);
   console.log('');
   console.log(`Admin: ${ADMIN.email} / ${ADMIN.password}`);
+  console.log(
+    `Contas de teste (admin@teste.com, prof@teste.com, aluno@teste.com): senha ${TEST_ACCOUNTS_PASSWORD}`,
+  );
   console.log(`Demais usuários: senha ${FAKE_PASSWORD}`);
   console.log('');
 }

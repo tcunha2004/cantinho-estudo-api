@@ -10,6 +10,7 @@ import { ClassesModule } from './classes/classes.module';
 import { StudentContractsModule } from './student-contracts/student-contracts.module';
 import { GuardiansModule } from './guardians/guardians.module';
 import { TeachersModule } from './teachers/teachers.module';
+import { RegionsModule } from './regions/regions.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { TeachersModule } from './teachers/teachers.module';
     StudentContractsModule,
     GuardiansModule,
     TeachersModule,
+    RegionsModule,
   ],
   providers: [
     {

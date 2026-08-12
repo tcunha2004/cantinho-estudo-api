@@ -5,9 +5,17 @@ import { TeacherEntity } from '../../../teachers/entity/teacher.entity';
 import { SubjectEntity } from '../../../subjects/entity/subject.entity';
 import { StudentContractEntity } from '../../../student-contracts/entity/student-contract.entity';
 import { ClassEntity } from '../../../classes/entity/class.entity';
+import { PlanEntity } from '../../../plans/entity/plan.entity';
+import { RegionEntity } from '../../../regions/entity/region.entity';
 import { ContractStatus } from '../../../student-contracts/enums/contract-status.enum';
 import { ClassStatus } from '../../../classes/enums/class-status.enum';
 import { LocationType } from '../../../classes/enums/location-type.enum';
+
+/*
+ * Aula no Cantinho sempre usa a tabela desta região, não a do bairro do aluno
+ * — mesma constante usada em ClassesService e no seed.
+ */
+const CANTINHO_REGION_SLUG = 'cantinho';
 
 /*
  * Cria aulas para um professor já existente, sem apagar nada — ao contrário do
@@ -330,6 +338,41 @@ async function resolveContracts(
   return covering;
 }
 
+interface Pricing {
+  cantinhoRegion: RegionEntity;
+  planByKey: Map<string, PlanEntity>;
+}
+
+/*
+ * Carrega a região Cantinho e todos os planos (com a região de cada um), para
+ * resolver em memória a região e o plano equivalente de cada aula — mesma
+ * regra de ClassesService.finalize() e do seed.
+ */
+async function resolvePricing(manager: EntityManager): Promise<Pricing> {
+  const plans = await manager
+    .getRepository(PlanEntity)
+    .find({ relations: { region: true } });
+
+  const planByKey = new Map(
+    plans.map((plan) => [
+      `${plan.region.slug}|${plan.planType}|${plan.frequency ?? 'null'}`,
+      plan,
+    ]),
+  );
+
+  const cantinhoRegion = plans.find(
+    (plan) => plan.region.slug === CANTINHO_REGION_SLUG,
+  )?.region;
+
+  if (!cantinhoRegion) {
+    throw new Error(
+      `Região "${CANTINHO_REGION_SLUG}" não cadastrada. Rode \`npm run seed\` antes de criar aulas.`,
+    );
+  }
+
+  return { cantinhoRegion, planByKey };
+}
+
 /* ------------------------------------------------------------------ *
  * Geração
  * ------------------------------------------------------------------ */
@@ -346,10 +389,10 @@ function buildClass(
   subject: SubjectEntity,
   contract: StudentContractEntity,
   today: Date,
+  pricing: Pricing,
 ): ClassEntity {
   const classRepository = manager.getRepository(ClassEntity);
   const student = contract.student;
-  const region = student.region;
 
   const day = addDays(today, isPast ? -offsetDays : offsetDays);
   const scheduledAt = at(day, randomInt(8, 19), chance(0.5) ? 0 : 30);
@@ -370,22 +413,49 @@ function buildClass(
   const completed = status === ClassStatus.COMPLETED;
   const discount = Number(contract.discountPercentage ?? 0) / 100;
 
+  const locationType =
+    student.address && chance(0.7) ? LocationType.HOME : LocationType.SCHOOL;
+
+  /*
+   * Região da aula: no Cantinho (school) é sempre a região Cantinho, não a do
+   * bairro do aluno; na casa do aluno (home) é a região dele. O valor cobrado
+   * vem do plano equivalente (mesmo tipo/frequência) nessa região — mesma
+   * regra de ClassesService.finalize().
+   */
+  const classRegionSlug =
+    locationType === LocationType.HOME
+      ? student.region.slug
+      : CANTINHO_REGION_SLUG;
+  const classRegion =
+    locationType === LocationType.HOME
+      ? student.region
+      : pricing.cantinhoRegion;
+  const classPlan = pricing.planByKey.get(
+    `${classRegionSlug}|${contract.plan.planType}|${contract.plan.frequency ?? 'null'}`,
+  );
+
+  if (completed && !classPlan) {
+    throw new Error(
+      `Plano equivalente não encontrado na região da aula (${classRegionSlug}, ` +
+        `${contract.plan.planType}, ${contract.plan.frequency ?? 'sem frequência'})`,
+    );
+  }
+
   return classRepository.create({
     studentContract: contract,
     teacher,
     subject,
     /* Região e valores só são congelados quando a aula é concluída */
-    region: completed ? region : null,
+    region: completed ? classRegion : null,
     scheduledAt: toTimestampString(scheduledAt),
     durationMinutes,
-    locationType:
-      student.address && chance(0.7) ? LocationType.HOME : LocationType.SCHOOL,
+    locationType,
     status,
     commissionAmount: completed
-      ? money(Number(region.classCommission) * hours)
+      ? money(Number(classRegion.classCommission) * hours)
       : null,
     amountCharged: completed
-      ? money(Number(contract.plan.hourPrice) * hours * (1 - discount))
+      ? money(Number(classPlan!.hourPrice) * hours * (1 - discount))
       : null,
     notes: completed && chance(0.25) ? pick(CLASS_NOTES) : null,
   });
@@ -403,6 +473,7 @@ async function createClasses(ds: DataSource, options: Options): Promise<void> {
     const teacher = await resolveTeacher(manager, options);
     const subjects = await resolveSubjects(manager, teacher);
     const contracts = await resolveContracts(manager, windowStart, windowEnd);
+    const pricing = await resolvePricing(manager);
 
     /*
      * Nada é agendado para hoje: as aulas passadas ficam em [-days, -1] e as
@@ -431,6 +502,7 @@ async function createClasses(ds: DataSource, options: Options): Promise<void> {
         subjects[index % subjects.length],
         contracts[index % contracts.length],
         today,
+        pricing,
       ),
     );
 

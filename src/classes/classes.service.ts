@@ -11,6 +11,7 @@ import {
   FindOptionsRelations,
   FindOptionsWhere,
   In,
+  IsNull,
   LessThan,
   MoreThan,
   Repository,
@@ -18,6 +19,7 @@ import {
 } from 'typeorm';
 import { ClassEntity } from './entity/class.entity';
 import { BILLABLE_STATUSES, ClassStatus } from './enums/class-status.enum';
+import { LocationType } from './enums/location-type.enum';
 import {
   addMinutesToNaive,
   getCurrentDayRange,
@@ -40,6 +42,10 @@ import { StudentContractEntity } from '../student-contracts/entity/student-contr
 import { ContractStatus } from '../student-contracts/enums/contract-status.enum';
 import { TeacherEntity } from '../teachers/entity/teacher.entity';
 import { UserPayload } from '../auth/auth.service';
+import { PlanEntity } from '../plans/entity/plan.entity';
+import { PlanType } from '../plans/enums/plan-type.enum';
+import { Frequency } from '../plans/enums/frequency.enum';
+import { RegionEntity } from '../regions/entity/region.entity';
 
 /* Relações que a agenda e o detalhe da aula sempre precisam carregar. */
 const CLASS_RELATIONS = {
@@ -47,6 +53,12 @@ const CLASS_RELATIONS = {
   teacher: { user: true },
   subject: true,
 } as const;
+
+/*
+ * Aula no Cantinho sempre usa a tabela desta região, não a do bairro do aluno
+ * — é o padrão quando a aula acontece na sede, sem deslocamento.
+ */
+const CANTINHO_REGION_SLUG = 'cantinho';
 
 /*
  * Aulas nesses status ocupam o horário. A falta entra porque o professor esteve
@@ -75,6 +87,10 @@ export class ClassesService {
     private readonly contractRepository: Repository<StudentContractEntity>,
     @InjectRepository(TeacherEntity)
     private readonly teacherRepository: Repository<TeacherEntity>,
+    @InjectRepository(PlanEntity)
+    private readonly planRepository: Repository<PlanEntity>,
+    @InjectRepository(RegionEntity)
+    private readonly regionRepository: Repository<RegionEntity>,
   ) {}
 
   public async countCurrentWeek(): Promise<number> {
@@ -532,15 +548,81 @@ export class ClassesService {
     const { student, plan, discountPercentage } = item.studentContract;
     const discount = Number(discountPercentage ?? 0) / 100;
 
+    const region = await this.resolveClassRegion(
+      item.locationType,
+      student.region,
+    );
+    const equivalentPlan = await this.resolveEquivalentPlan(
+      region,
+      plan.planType,
+      plan.frequency,
+    );
+
     await this.classRepository.save({
       id: item.id,
       status,
-      region: student.region,
-      commissionAmount: money(Number(student.region.classCommission) * hours),
-      amountCharged: money(Number(plan.hourPrice) * hours * (1 - discount)),
+      region,
+      commissionAmount: money(Number(region.classCommission) * hours),
+      amountCharged: money(
+        Number(equivalentPlan.hourPrice) * hours * (1 - discount),
+      ),
     });
 
     return await this.findById(user, item.id);
+  }
+
+  /*
+   * Região da aula: no Cantinho (school) é sempre a região Cantinho; na casa
+   * do aluno (home) é a região onde ele mora. Determina tanto a comissão do
+   * professor quanto o plano equivalente usado para cobrar o aluno.
+   */
+  private async resolveClassRegion(
+    locationType: LocationType,
+    studentRegion: RegionEntity,
+  ): Promise<RegionEntity> {
+    if (locationType === LocationType.HOME) {
+      return studentRegion;
+    }
+
+    const cantinho = await this.regionRepository.findOne({
+      where: { slug: CANTINHO_REGION_SLUG },
+    });
+
+    if (!cantinho) {
+      throw new NotFoundException(
+        `Região "${CANTINHO_REGION_SLUG}" não cadastrada`,
+      );
+    }
+
+    return cantinho;
+  }
+
+  /*
+   * O contrato aponta para o plano da região do aluno, mas a aula pode
+   * acontecer em outra região (ex.: aluno de fora estudando no Cantinho).
+   * Busca o plano de mesmo tipo e frequência na região onde a aula ocorreu —
+   * é ele que define o valor cobrado, não o plano do contrato.
+   */
+  private async resolveEquivalentPlan(
+    region: RegionEntity,
+    planType: PlanType,
+    frequency: Frequency | null,
+  ): Promise<PlanEntity> {
+    const plan = await this.planRepository.findOne({
+      where: {
+        region: { id: region.id },
+        planType,
+        frequency: frequency ?? IsNull(),
+      },
+    });
+
+    if (!plan) {
+      throw new NotFoundException(
+        'Plano equivalente não encontrado na região da aula',
+      );
+    }
+
+    return plan;
   }
 
   /*
