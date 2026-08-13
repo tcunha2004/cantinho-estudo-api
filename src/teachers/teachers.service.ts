@@ -64,21 +64,13 @@ export class TeachersService {
         amountToReceive: string;
       }>();
 
-    const teachers = rows.map((row) => {
-      const completedClasses = Number(row.completedClasses);
-      const amountToReceive = Number(row.amountToReceive);
-
-      return {
-        id: row.id,
-        name: row.name,
-        subject: row.subject ?? '',
-        completedClasses,
-        amountToReceive,
-        amountPerClass: completedClasses
-          ? amountToReceive / completedClasses
-          : 0,
-      };
-    });
+    const teachers = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      subject: row.subject ?? '',
+      completedClasses: Number(row.completedClasses),
+      amountToReceive: Number(row.amountToReceive),
+    }));
 
     const totalCompletedClasses = teachers.reduce(
       (total, teacher) => total + teacher.completedClasses,

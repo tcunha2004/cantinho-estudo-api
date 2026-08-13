@@ -5,10 +5,16 @@ import { StudentsController } from './students.controller';
 import { StudentEntity } from './entity/student.entity';
 import { PlanEntity } from '../plans/entity/plan.entity';
 import { PaymentEntity } from '../payments/entity/payment.entity';
+import { ClassEntity } from '../classes/entity/class.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([StudentEntity, PlanEntity, PaymentEntity]),
+    TypeOrmModule.forFeature([
+      StudentEntity,
+      PlanEntity,
+      PaymentEntity,
+      ClassEntity,
+    ]),
   ],
   controllers: [StudentsController],
   providers: [StudentsService],

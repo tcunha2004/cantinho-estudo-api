@@ -17,7 +17,10 @@ import { PlanType } from '../../../plans/enums/plan-type.enum';
 import { Frequency } from '../../../plans/enums/frequency.enum';
 import { ContractStatus } from '../../../student-contracts/enums/contract-status.enum';
 import { PaymentStatus } from '../../../payments/enums/payment-status.enum';
-import { ClassStatus } from '../../../classes/enums/class-status.enum';
+import {
+  BILLABLE_STATUSES,
+  ClassStatus,
+} from '../../../classes/enums/class-status.enum';
 import { LocationType } from '../../../classes/enums/location-type.enum';
 import { TargetRole } from '../../../invite-links/enums/target-role.enum';
 import { nowNaive } from '../../../utils/date-range.util';
@@ -1067,70 +1070,6 @@ async function seed(ds: DataSource): Promise<void> {
 
     const discount = (studentSeed.discountPercentage ?? 0) / 100;
 
-    /* ---------------- pagamentos (mensalidades) ---------------- */
-
-    /* Última competência cobrada: fim do contrato, se houver, ou o mês atual */
-    const lastBilled = endDate && endDate < today ? endDate : today;
-    const payments: PaymentEntity[] = [];
-    let overdueUsed = false;
-
-    for (
-      let cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-      cursor <= new Date(lastBilled.getFullYear(), lastBilled.getMonth(), 1);
-      cursor = addMonths(cursor, 1)
-    ) {
-      const dueDate = at(
-        new Date(cursor.getFullYear(), cursor.getMonth(), 10),
-        0,
-      );
-      const amount = Number(plan.monthlyPrice) * (1 - discount);
-      const isCurrentMonth =
-        dueDate.getFullYear() === today.getFullYear() &&
-        dueDate.getMonth() === today.getMonth();
-
-      let status: PaymentStatus;
-      let paidAt: string | null = null;
-
-      if (
-        studentSeed.contractStatus === ContractStatus.CANCELLED &&
-        isCurrentMonth
-      ) {
-        status = PaymentStatus.CANCELLED;
-      } else if (isCurrentMonth) {
-        /* Mês corrente: metade já pagou, metade em aberto */
-        if (chance(0.5) && dueDate <= today) {
-          status = PaymentStatus.PAID;
-          paidAt = toTimestampString(
-            at(addDays(dueDate, -randomInt(0, 4)), randomInt(9, 18)),
-          );
-        } else {
-          status = PaymentStatus.PENDING;
-        }
-      } else if (!overdueUsed && chance(0.12)) {
-        /* Uma inadimplência ocasional no histórico */
-        status = PaymentStatus.OVERDUE;
-        overdueUsed = true;
-      } else {
-        status = PaymentStatus.PAID;
-        paidAt = toTimestampString(
-          at(addDays(dueDate, randomInt(-5, 3)), randomInt(9, 19)),
-        );
-      }
-
-      payments.push(
-        paymentRepository.create({
-          studentContract: contract,
-          amount: money(amount),
-          dueDate: toDateString(dueDate),
-          paidAt,
-          status,
-        }),
-      );
-    }
-
-    await paymentRepository.save(payments);
-    totalPayments += payments.length;
-
     /* ---------------- aulas ---------------- */
 
     /* Só geramos histórico dos últimos HISTORY_MONTHS meses */
@@ -1184,6 +1123,9 @@ async function seed(ds: DataSource): Promise<void> {
 
       const hours = durationMinutes / 60;
       const completed = status === ClassStatus.COMPLETED;
+      const billable = (BILLABLE_STATUSES as readonly ClassStatus[]).includes(
+        status,
+      );
 
       /*
        * Região da aula: no Cantinho (school) é sempre a região Cantinho, não a
@@ -1206,16 +1148,16 @@ async function seed(ds: DataSource): Promise<void> {
           studentContract: contract,
           teacher,
           subject,
-          /* Região e valores só são congelados quando a aula é concluída */
-          region: completed ? classRegion : null,
+          /* Região e valores só são congelados quando a aula é faturável */
+          region: billable ? classRegion : null,
           scheduledAt: toTimestampString(scheduledAt),
           durationMinutes,
           locationType,
           status,
-          commissionAmount: completed
+          commissionAmount: billable
             ? money(Number(classRegion.classCommission) * hours)
             : null,
-          amountCharged: completed
+          amountCharged: billable
             ? money(Number(classPlan.hourPrice) * hours * (1 - discount))
             : null,
           notes: completed && chance(0.25) ? pick(CLASS_NOTES) : null,
@@ -1225,6 +1167,90 @@ async function seed(ds: DataSource): Promise<void> {
 
     await classRepository.save(classes, { chunk: 200 });
     allClasses.push(...classes);
+
+    /* ---------------- pagamentos (apurados pelas aulas faturáveis) ---------------- */
+
+    /*
+     * O aluno não tem mensalidade fixa: o valor de cada parcela é a soma do
+     * amount_charged das aulas faturáveis (completed + no_show) cujo
+     * scheduled_at cai no mês do vencimento — mesma regra de
+     * StudentsService.findPaymentHistory(). Meses sem aula faturável não geram
+     * parcela.
+     */
+    const lastBilled = endDate && endDate < today ? endDate : today;
+    const payments: PaymentEntity[] = [];
+    let overdueUsed = false;
+
+    for (
+      let cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+      cursor <= new Date(lastBilled.getFullYear(), lastBilled.getMonth(), 1);
+      cursor = addMonths(cursor, 1)
+    ) {
+      const dueDate = at(
+        new Date(cursor.getFullYear(), cursor.getMonth(), 10),
+        0,
+      );
+      const monthKey = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}`;
+      const amount = classes
+        .filter(
+          (item) =>
+            (BILLABLE_STATUSES as readonly ClassStatus[]).includes(
+              item.status,
+            ) && item.scheduledAt.startsWith(monthKey),
+        )
+        .reduce((total, item) => total + Number(item.amountCharged ?? 0), 0);
+
+      if (amount === 0) {
+        /* Sem aula faturável nessa competência: não há o que cobrar */
+        continue;
+      }
+
+      const isCurrentMonth =
+        dueDate.getFullYear() === today.getFullYear() &&
+        dueDate.getMonth() === today.getMonth();
+
+      let status: PaymentStatus;
+      let paidAt: string | null = null;
+
+      if (
+        studentSeed.contractStatus === ContractStatus.CANCELLED &&
+        isCurrentMonth
+      ) {
+        status = PaymentStatus.CANCELLED;
+      } else if (isCurrentMonth) {
+        /* Mês corrente: metade já pagou, metade em aberto */
+        if (chance(0.5) && dueDate <= today) {
+          status = PaymentStatus.PAID;
+          paidAt = toTimestampString(
+            at(addDays(dueDate, -randomInt(0, 4)), randomInt(9, 18)),
+          );
+        } else {
+          status = PaymentStatus.PENDING;
+        }
+      } else if (!overdueUsed && chance(0.12)) {
+        /* Uma inadimplência ocasional no histórico */
+        status = PaymentStatus.OVERDUE;
+        overdueUsed = true;
+      } else {
+        status = PaymentStatus.PAID;
+        paidAt = toTimestampString(
+          at(addDays(dueDate, randomInt(-5, 3)), randomInt(9, 19)),
+        );
+      }
+
+      payments.push(
+        paymentRepository.create({
+          studentContract: contract,
+          amount: money(amount),
+          dueDate: toDateString(dueDate),
+          paidAt,
+          status,
+        }),
+      );
+    }
+
+    await paymentRepository.save(payments);
+    totalPayments += payments.length;
   }
 
   /* ---------------- aulas de hoje ainda por acontecer ---------------- */
