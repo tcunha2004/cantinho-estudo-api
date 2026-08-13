@@ -520,18 +520,22 @@ function resolveEndDate(options: Options, plan: PlanEntity): string | null {
  * Uma mensalidade por competência entre o início do contrato e o mês corrente
  * (ou o fim do contrato, se já passou). As passadas saem pagas, a do mês
  * corrente fica em aberto — e num contrato cancelado, cancelada.
+ *
+ * O aluno não tem mensalidade fixa: o valor de cada parcela é apurado pelas
+ * aulas do mês (StudentsService.findPaymentHistory()), e este script cria o
+ * contrato sem aulas. Por isso as parcelas nascem com amount 0 — um calendário
+ * vazio que se preenche quando `npm run classes:create` gerar aulas para o
+ * contrato.
  */
 function buildPayments(
   manager: EntityManager,
   contract: StudentContractEntity,
-  plan: PlanEntity,
   startDate: Date,
   endDate: Date | null,
   today: Date,
 ): PaymentEntity[] {
   const paymentRepository = manager.getRepository(PaymentEntity);
-  const discount = Number(contract.discountPercentage ?? 0) / 100;
-  const amount = money(Number(plan.monthlyPrice) * (1 - discount));
+  const amount = money(0);
 
   const lastBilled = endDate && endDate < today ? endDate : today;
   const lastMonth = new Date(
@@ -617,7 +621,6 @@ async function createContract(ds: DataSource, options: Options): Promise<void> {
       ? buildPayments(
           manager,
           contract,
-          plan,
           fromDateString(options.start),
           endDate ? fromDateString(endDate) : null,
           today,
@@ -679,6 +682,10 @@ function report(
 
   console.log('');
   console.log(`Mensalidades criadas: ${payments.length}`);
+  console.log(
+    '  (calendário vazio — o valor de cada parcela é apurado pelas aulas do mês; ' +
+      'rode `npm run classes:create` para gerar aulas e preencher os valores)',
+  );
   for (const item of payments) {
     console.log(
       `  ${item.dueDate}  R$ ${String(item.amount).padStart(9)}  ${item.status}`,

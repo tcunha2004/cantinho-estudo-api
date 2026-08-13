@@ -5,7 +5,7 @@ export class RegionPricingDto {
   name: string;
   slug: string;
   enrollmentFee: string;
-  /* Comissão paga ao professor por aula concluída nesta região */
+  /* Comissão paga ao professor por hora de aula nesta região */
   classCommission: string;
   plans: PlanPricingDto[];
 }

@@ -10,6 +10,4 @@ export class TeacherEarningsDto {
   completedClasses: number;
   /* Total a receber no mês (soma das comissões das aulas cobráveis) */
   amountToReceive: number;
-  /* Valor por aula no mês (0 quando não houve aulas cobráveis) */
-  amountPerClass: number;
 }

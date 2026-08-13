@@ -1,15 +1,29 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsRelations, Repository } from 'typeorm';
+import { FindOptionsRelations, IsNull, Repository } from 'typeorm';
 import { StudentEntity } from './entity/student.entity';
 import { StudentContractEntity } from '../student-contracts/entity/student-contract.entity';
 import { GuardianEntity } from '../guardians/entity/guardian.entity';
 import { PlanEntity } from '../plans/entity/plan.entity';
 import { PaymentEntity } from '../payments/entity/payment.entity';
+import { ClassEntity } from '../classes/entity/class.entity';
+import { BILLABLE_STATUSES } from '../classes/enums/class-status.enum';
+import { getMonthRange } from '../utils/date-range.util';
 import { ActiveStudentDto } from './dto/active-student.dto';
 import { StudentPlanDto } from './dto/student-plan.dto';
 import { PlanSummaryDto } from './dto/plan-summary.dto';
 import { PaymentHistoryDto } from './dto/payment-history.dto';
+
+/*
+ * Aula no Cantinho sempre usa a tabela desta região, não a do bairro do aluno
+ * — mesma constante usada em ClassesService.
+ */
+const CANTINHO_REGION_SLUG = 'cantinho';
+
+/* Valor monetário como o banco guarda: decimal(10,2) em string. */
+function money(value: number): string {
+  return value.toFixed(2);
+}
 
 @Injectable()
 export class StudentsService {
@@ -20,6 +34,8 @@ export class StudentsService {
     private readonly planRepository: Repository<PlanEntity>,
     @InjectRepository(PaymentEntity)
     private readonly paymentRepository: Repository<PaymentEntity>,
+    @InjectRepository(ClassEntity)
+    private readonly classRepository: Repository<ClassEntity>,
   ) {}
 
   public async countActive(): Promise<number> {
@@ -29,7 +45,12 @@ export class StudentsService {
   public async findAllActive(): Promise<ActiveStudentDto[]> {
     const students = await this.studentRepository.find({
       where: { active: true },
-      relations: { user: true, guardians: true, contracts: { plan: true } },
+      relations: {
+        user: true,
+        guardians: true,
+        region: true,
+        contracts: { plan: true },
+      },
     });
 
     return students
@@ -43,7 +64,7 @@ export class StudentsService {
           guardian: guardian?.name ?? null,
           plan: contract?.plan.planType ?? null,
           frequency: contract?.plan.frequency ?? null,
-          monthlyPrice: contract?.plan.monthlyPrice ?? null,
+          region: student.region?.name ?? null,
           contractStatus: contract?.status ?? null,
         };
       })
@@ -54,7 +75,10 @@ export class StudentsService {
    * Plano do aluno autenticado (userId = sub do token): retorna todos os dados
    * do plano do contrato mais recente do aluno (tipo, preços, frequência,
    * região, ...) junto com o contexto do contrato (status, vigência e desconto
-   * aplicado). Lança 404 se o aluno não existir ou não tiver nenhum contrato.
+   * aplicado). A hora/aula do Cantinho do Estudo vem do plano equivalente
+   * (mesmo tipo/frequência) naquela região — mesma regra usada para congelar o
+   * valor das aulas. Lança 404 se o aluno não existir ou não tiver nenhum
+   * contrato.
    */
   public async findStudentPlan(userId: string): Promise<StudentPlanDto> {
     const student = await this.findStudentByUserId(userId, {
@@ -70,13 +94,30 @@ export class StudentsService {
 
     const { plan } = contract;
 
+    const cantinhoPlan =
+      plan.region.slug === CANTINHO_REGION_SLUG
+        ? plan
+        : await this.planRepository.findOne({
+            where: {
+              region: { slug: CANTINHO_REGION_SLUG },
+              planType: plan.planType,
+              frequency: plan.frequency ?? IsNull(),
+            },
+          });
+
+    if (!cantinhoPlan) {
+      throw new NotFoundException(
+        'Plano equivalente não encontrado no Cantinho do Estudo',
+      );
+    }
+
     return {
       studentId: student.id,
       studentName: student.user.name,
       planType: plan.planType,
       frequency: plan.frequency,
-      monthlyPrice: plan.monthlyPrice,
       hourPrice: plan.hourPrice,
+      cantinhoHourPrice: cantinhoPlan.hourPrice,
       classesCount: plan.classesCount,
       validityMonths: plan.validityMonths,
       region: plan.region.name,
@@ -91,8 +132,8 @@ export class StudentsService {
   /*
    * Outros planos disponíveis para o aluno autenticado: os principais dados dos
    * planos da região do aluno, exceto o plano do seu contrato atual. Se o aluno
-   * não tiver contrato, retorna todos os planos da região. Ordenados pelo preço
-   * mensal (crescente).
+   * não tiver contrato, retorna todos os planos da região. Ordenados pela
+   * hora/aula (crescente) — não há mensalidade fixa a ordenar.
    */
   public async findOtherPlans(userId: string): Promise<PlanSummaryDto[]> {
     const student = await this.findStudentByUserId(userId, {
@@ -104,7 +145,7 @@ export class StudentsService {
 
     const plans = await this.planRepository.find({
       where: { region: { id: student.region.id } },
-      order: { monthlyPrice: 'ASC' },
+      order: { hourPrice: 'ASC' },
     });
 
     return plans
@@ -112,7 +153,6 @@ export class StudentsService {
       .map((plan) => ({
         planType: plan.planType,
         frequency: plan.frequency,
-        monthlyPrice: plan.monthlyPrice,
         hourPrice: plan.hourPrice,
         classesCount: plan.classesCount,
         validityMonths: plan.validityMonths,
@@ -121,10 +161,13 @@ export class StudentsService {
 
   /*
    * Histórico de pagamentos do aluno autenticado (userId = sub do token):
-   * todas as parcelas de todos os contratos do aluno, com valor, vencimento,
-   * data de pagamento e status, junto com o tipo do plano do contrato de cada
-   * parcela. Ordenado pelo vencimento (mais recente primeiro). Lança 404 se o
-   * aluno não existir.
+   * todas as parcelas de todos os contratos do aluno, com vencimento, data de
+   * pagamento e status, junto com o tipo do plano do contrato de cada parcela.
+   * O valor de cada parcela não vem da coluna `payments.amount` — é apurado na
+   * leitura, somando o `amount_charged` (congelado) das aulas faturáveis
+   * (`completed` + `no_show`) do contrato cujo `scheduled_at` cai no mês do
+   * vencimento. Ordenado pelo vencimento (mais recente primeiro). Lança 404 se
+   * o aluno não existir.
    */
   public async findPaymentHistory(
     userId: string,
@@ -137,14 +180,54 @@ export class StudentsService {
       order: { dueDate: 'DESC' },
     });
 
-    return payments.map((payment) => ({
-      id: payment.id,
-      amount: payment.amount,
-      dueDate: payment.dueDate,
-      paidAt: payment.paidAt,
-      status: payment.status,
-      planType: payment.studentContract.plan.planType,
-    }));
+    return await Promise.all(
+      payments.map(async (payment) => {
+        const { amount, classesCount } = await this.sumBillableClasses(
+          payment.studentContract.id,
+          payment.dueDate,
+        );
+
+        return {
+          id: payment.id,
+          amount,
+          dueDate: payment.dueDate,
+          paidAt: payment.paidAt,
+          status: payment.status,
+          planType: payment.studentContract.plan.planType,
+          classesCount,
+        };
+      }),
+    );
+  }
+
+  /*
+   * Soma o valor cobrado (amount_charged) e conta as aulas faturáveis de um
+   * contrato cujo scheduled_at cai no mês da competência (dueDate). É a mesma
+   * base usada pela receita do admin (ClassesService.sumRevenue) — cobrança do
+   * aluno e receita olham para o mesmo conjunto de aulas.
+   */
+  private async sumBillableClasses(
+    contractId: string,
+    dueDate: string,
+  ): Promise<{ amount: string; classesCount: number }> {
+    const [year, monthNumber] = dueDate.split('-').map(Number);
+    const { start, end } = getMonthRange(year, monthNumber);
+
+    const result = await this.classRepository
+      .createQueryBuilder('class')
+      .where('class.student_contract_id = :contractId', { contractId })
+      .andWhere('class.status IN (:...billable)', {
+        billable: BILLABLE_STATUSES,
+      })
+      .andWhere('class.scheduledAt BETWEEN :start AND :end', { start, end })
+      .select('COALESCE(SUM(class.amount_charged), 0)', 'amount')
+      .addSelect('COUNT(class.id)', 'classesCount')
+      .getRawOne<{ amount: string; classesCount: string }>();
+
+    return {
+      amount: money(Number(result?.amount ?? 0)),
+      classesCount: Number(result?.classesCount ?? 0),
+    };
   }
 
   /* Busca o aluno pelo id do usuário (sub do token). Lança 404 se não existir. */

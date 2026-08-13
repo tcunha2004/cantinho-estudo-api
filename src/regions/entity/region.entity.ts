@@ -31,7 +31,7 @@ export class RegionEntity {
   })
   enrollmentFee: string;
 
-  /* Comissão paga ao professor por aula concluída nesta região */
+  /* Comissão paga ao professor por hora de aula nesta região */
   @Column({
     name: 'class_commission',
     type: 'decimal',
