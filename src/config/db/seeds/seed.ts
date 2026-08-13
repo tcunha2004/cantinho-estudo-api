@@ -1,61 +1,44 @@
 import 'dotenv/config';
-import * as bcrypt from 'bcrypt';
 import { DataSource } from 'typeorm';
 import dataSource from '../data-source';
-import { UserEntity, UserRole } from '../../../users/entity/user.entity';
+import { UserEntity } from '../../../users/entity/user.entity';
 import { RegionEntity } from '../../../regions/entity/region.entity';
 import { PlanEntity } from '../../../plans/entity/plan.entity';
 import { SubjectEntity } from '../../../subjects/entity/subject.entity';
 import { TeacherEntity } from '../../../teachers/entity/teacher.entity';
 import { StudentEntity } from '../../../students/entity/student.entity';
-import { GuardianEntity } from '../../../guardians/entity/guardian.entity';
 import { StudentContractEntity } from '../../../student-contracts/entity/student-contract.entity';
 import { PaymentEntity } from '../../../payments/entity/payment.entity';
-import { ClassEntity } from '../../../classes/entity/class.entity';
-import { InviteLinkEntity } from '../../../invite-links/entity/invite-link.entity';
 import { PlanType } from '../../../plans/enums/plan-type.enum';
 import { Frequency } from '../../../plans/enums/frequency.enum';
 import { ContractStatus } from '../../../student-contracts/enums/contract-status.enum';
 import { PaymentStatus } from '../../../payments/enums/payment-status.enum';
-import {
-  BILLABLE_STATUSES,
-  ClassStatus,
-} from '../../../classes/enums/class-status.enum';
-import { LocationType } from '../../../classes/enums/location-type.enum';
-import { TargetRole } from '../../../invite-links/enums/target-role.enum';
-import { nowNaive } from '../../../utils/date-range.util';
+import { hashPassword, money, toDateString } from './helpers';
 
 /*
- * Seed de dados fictícios do Cantinho do Estudo.
+ * Seed principal do Cantinho do Estudo.
  *
- * Apaga tudo (TRUNCATE) e recria a base inteira de forma determinística — o
- * gerador pseudoaleatório tem semente fixa, então rodar duas vezes produz os
- * mesmos dados (só os ids uuid mudam). As datas são relativas ao dia da
- * execução, para que os endpoints de dashboard (aulas de hoje, receita do mês,
- * aulas da semana) sempre tenham conteúdo.
+ * Dá TRUNCATE em tudo e recria só o essencial para começar a usar o sistema:
+ * o catálogo (matérias, regiões, planos) e as 3 contas de teste, cada uma já
+ * com o mínimo para navegar nas telas do seu papel. Não cria professores,
+ * alunos ou aulas fictícios em massa — para isso, veja os seeds especializados
+ * (`user:create`, `subject:create`, `contract:create`, `classes:create`), cada
+ * um com instruções de uso no início do próprio arquivo.
+ *
+ *   npm run seed
+ *
+ * Rodar de novo sempre apaga tudo e recomeça do mesmo jeito (só os uuids
+ * mudam) — é seguro repetir a qualquer momento durante o desenvolvimento.
  */
 
 /* ------------------------------------------------------------------ *
  * Configuração
  * ------------------------------------------------------------------ */
 
-const ADMIN = {
-  name: 'Thiago Cunha',
-  email: 'tcunha2004@gmail.com',
-  password: 'Nanum2004',
-};
-
-/* Senha de todos os usuários fictícios (professores e alunos) */
-const FAKE_PASSWORD = 'Senha123';
-
-/* Senha das contas de teste (@teste.com), uma por papel: admin, professor e aluno */
 const TEST_ACCOUNTS_PASSWORD = 'teste123';
 
-/* Quantos meses de histórico de aulas/pagamentos gerar */
-const HISTORY_MONTHS = 4;
-
-/* Até quando gerar aulas futuras (agendadas) */
-const FUTURE_DAYS = 21;
+const CANTINHO_REGION_SLUG = 'cantinho';
+const VILA_DA_SERRA_SLUG = 'vila-da-serra';
 
 /* Ordem inversa das dependências — usada no TRUNCATE */
 const TABLES = [
@@ -73,103 +56,30 @@ const TABLES = [
   'users',
 ];
 
-/* ------------------------------------------------------------------ *
- * Utilidades
- * ------------------------------------------------------------------ */
+/* Dia do vencimento das mensalidades — o mesmo usado por contract:create */
+const DUE_DAY = 10;
 
-/* PRNG com semente fixa (LCG) — mantém o seed reproduzível */
-let rngState = 20260731;
-function random(): number {
-  rngState = (rngState * 1664525 + 1013904223) % 4294967296;
-  return rngState / 4294967296;
-}
+/* Catálogo escolar padrão */
+const SUBJECTS = [
+  'Matemática',
+  'Português',
+  'Redação',
+  'Física',
+  'Química',
+  'Biologia',
+  'História',
+  'Geografia',
+  'Inglês',
+  'Filosofia',
+  'Sociologia',
+  'Artes',
+];
 
-function pick<T>(items: T[]): T {
-  return items[Math.floor(random() * items.length)];
-}
-
-function chance(probability: number): boolean {
-  return random() < probability;
-}
-
-function randomInt(min: number, max: number): number {
-  return min + Math.floor(random() * (max - min + 1));
-}
-
-function money(value: number): string {
-  return value.toFixed(2);
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-/* 'YYYY-MM-DD' no fuso local (colunas date) */
-function toDateString(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-/*
- * 'YYYY-MM-DD HH:mm:ss' no fuso local (colunas timestamp without time zone).
- * Passar string evita o driver converter a Date para UTC e deslocar o horário
- * da aula em relação ao que as queries de período esperam.
- */
-function toTimestampString(date: Date): string {
-  return `${toDateString(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
-}
-
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
-
-function addMonths(date: Date, months: number): Date {
-  const result = new Date(date);
-  result.setMonth(result.getMonth() + months);
-  return result;
-}
-
-function at(date: Date, hour: number, minute = 0): Date {
-  const result = new Date(date);
-  result.setHours(hour, minute, 0, 0);
-  return result;
-}
-
-function cpf(): string {
-  const digits = Array.from({ length: 11 }, () => randomInt(0, 9)).join('');
-  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
-}
-
-function rg(): string {
-  const digits = Array.from({ length: 9 }, () => randomInt(0, 9)).join('');
-  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}-${digits.slice(8)}`;
-}
-
-function phone(): string {
-  return `(11) 9${randomInt(1000, 9999)}-${randomInt(1000, 9999)}`;
-}
-
-function token(): string {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  return Array.from({ length: 24 }, () => pick(alphabet.split(''))).join('');
-}
-
-/* ------------------------------------------------------------------ *
- * Dados base
- * ------------------------------------------------------------------ */
-
-/*
- * Aula no Cantinho sempre usa a tabela desta região, não a do bairro do aluno
- * — mesma constante usada em ClassesService.
- */
-const CANTINHO_REGION_SLUG = 'cantinho';
-
-/* Tabela comercial vigente (confirmada pelo Thiago) — ver PRECIFICACAO-POR-REGIAO.md */
+/* Tabela comercial vigente — ver PRECIFICACAO-POR-REGIAO.md */
 const REGIONS = [
   {
     name: 'Vila da Serra',
-    slug: 'vila-da-serra',
+    slug: VILA_DA_SERRA_SLUG,
     enrollmentFee: 200,
     classCommission: 85,
     active: true,
@@ -195,31 +105,6 @@ const REGIONS = [
     classCommission: 47,
     active: true,
   },
-];
-
-/*
- * Dias da semana em que cada tipo/frequência de plano acontece — usado só
- * para distribuir as aulas geradas, não varia por região.
- */
-const PLAN_WEEKDAYS = [
-  {
-    planType: PlanType.OURO,
-    frequency: Frequency.FIVE_TIMES_WEEK,
-    weekdays: [1, 2, 3, 4, 5],
-  },
-  {
-    planType: PlanType.OURO,
-    frequency: Frequency.THREE_TIMES_WEEK,
-    weekdays: [1, 3, 5],
-  },
-  {
-    planType: PlanType.OURO,
-    frequency: Frequency.TWICE_WEEK,
-    weekdays: [2, 4],
-  },
-  { planType: PlanType.PRATA, frequency: null, weekdays: [3] },
-  { planType: PlanType.BRONZE, frequency: null, weekdays: [6] },
-  { planType: PlanType.AVULSA, frequency: null, weekdays: [5] },
 ];
 
 /* Tabela oficial de preços — 6 planos por região, 24 no total */
@@ -453,395 +338,9 @@ const PLANS: {
   },
 ];
 
-const SUBJECTS = [
-  'Matemática',
-  'Português',
-  'Física',
-  'Química',
-  'Biologia',
-  'História',
-  'Geografia',
-  'Inglês',
-  'Redação',
-];
-
-const TEACHERS = [
-  {
-    name: 'Ana Beatriz Moraes',
-    email: 'ana.moraes@cantinhodoestudo.com',
-    bio: 'Licenciada em Matemática pela USP, 8 anos de experiência com reforço escolar do ensino fundamental ao médio.',
-    subjects: ['Matemática', 'Física'],
-  },
-  {
-    name: 'Carlos Eduardo Lima',
-    email: 'carlos.lima@cantinhodoestudo.com',
-    bio: 'Mestre em Letras, especialista em preparação para redação do ENEM e vestibulares.',
-    subjects: ['Português', 'Redação'],
-  },
-  {
-    name: 'Fernanda Ribeiro',
-    email: 'fernanda.ribeiro@cantinhodoestudo.com',
-    bio: 'Bacharel em Química com pós em Ensino de Ciências. Aulas práticas e muitos exercícios.',
-    subjects: ['Química', 'Biologia'],
-  },
-  {
-    name: 'Rafael Nogueira',
-    email: 'rafael.nogueira@cantinhodoestudo.com',
-    bio: 'Historiador e professor de humanas, foco em interpretação de texto e atualidades.',
-    subjects: ['História', 'Geografia'],
-  },
-  {
-    name: 'Juliana Prado',
-    email: 'juliana.prado@cantinhodoestudo.com',
-    bio: 'Tradutora e professora de inglês certificada (CPE), aulas conversacionais.',
-    subjects: ['Inglês', 'Português'],
-  },
-  {
-    name: 'Marcos Vinícius Alves',
-    email: 'marcos.alves@cantinhodoestudo.com',
-    bio: 'Engenheiro de formação, dá aulas de exatas há 5 anos com foco em olimpíadas escolares.',
-    subjects: ['Matemática', 'Física', 'Química'],
-  },
-  {
-    name: 'Professor Teste',
-    email: 'prof@teste.com',
-    bio: 'Conta de teste para desenvolvimento.',
-    subjects: ['Matemática', 'Português'],
-  },
-];
-
-interface StudentSeed {
-  name: string;
-  email: string;
-  region: string;
-  address: string | null;
-  active: boolean;
-  planType: PlanType;
-  frequency: Frequency | null;
-  /* Meses atrás em que o contrato começou */
-  startedMonthsAgo: number;
-  contractStatus: ContractStatus;
-  discountPercentage: number | null;
-  subjects: string[];
-  guardians: { name: string; financial: boolean }[];
-}
-
-const STUDENTS: StudentSeed[] = [
-  {
-    name: 'Lucas Ferreira Souza',
-    email: 'lucas.souza@example.com',
-    region: 'vila-da-serra',
-    address: 'Rua Augusta, 1200 — Consolação',
-    active: true,
-    planType: PlanType.OURO,
-    frequency: Frequency.THREE_TIMES_WEEK,
-    startedMonthsAgo: 6,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Matemática', 'Física'],
-    guardians: [
-      { name: 'Patrícia Ferreira Souza', financial: true },
-      { name: 'Roberto Souza', financial: false },
-    ],
-  },
-  {
-    name: 'Maria Clara Dias',
-    email: 'maria.dias@example.com',
-    region: 'centro-sul',
-    address: 'Rua Joaquim Nabuco, 421 — Brooklin',
-    active: true,
-    planType: PlanType.OURO,
-    frequency: Frequency.FIVE_TIMES_WEEK,
-    startedMonthsAgo: 5,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: 10,
-    subjects: ['Português', 'Redação', 'História'],
-    guardians: [{ name: 'Simone Dias', financial: true }],
-  },
-  {
-    name: 'Pedro Henrique Barros',
-    email: 'pedro.barros@example.com',
-    region: 'cidade-nova',
-    address: 'Av. Água Fria, 1210 — Santana',
-    active: true,
-    planType: PlanType.PRATA,
-    frequency: null,
-    startedMonthsAgo: 3,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Matemática'],
-    guardians: [{ name: 'Eliane Barros', financial: true }],
-  },
-  {
-    name: 'Beatriz Almeida Rocha',
-    email: 'beatriz.rocha@example.com',
-    region: 'cantinho',
-    address: 'Rua Oscar Freire, 540 — Jardins',
-    active: true,
-    planType: PlanType.OURO,
-    frequency: Frequency.TWICE_WEEK,
-    startedMonthsAgo: 4,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Química', 'Biologia'],
-    guardians: [{ name: 'Vanessa Almeida', financial: true }],
-  },
-  {
-    name: 'Gabriel Martins Costa',
-    email: 'gabriel.costa@example.com',
-    region: 'vila-da-serra',
-    address: 'Av. Paulista, 900 — Bela Vista',
-    active: true,
-    planType: PlanType.BRONZE,
-    frequency: null,
-    startedMonthsAgo: 1,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Inglês'],
-    guardians: [{ name: 'Cláudia Martins', financial: true }],
-  },
-  {
-    name: 'Isabela Nunes Teixeira',
-    email: 'isabela.teixeira@example.com',
-    region: 'centro-sul',
-    address: 'Rua Aurora, 88 — Santa Ifigênia',
-    active: true,
-    planType: PlanType.OURO,
-    frequency: Frequency.THREE_TIMES_WEEK,
-    startedMonthsAgo: 7,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: 5,
-    subjects: ['Matemática', 'Português'],
-    guardians: [
-      { name: 'Márcia Nunes', financial: false },
-      { name: 'Jorge Teixeira', financial: true },
-    ],
-  },
-  {
-    name: 'Enzo Gabriel Pereira',
-    email: 'enzo.pereira@example.com',
-    region: 'cidade-nova',
-    address: 'Rua do Paraíso, 233 — Paraíso',
-    active: true,
-    planType: PlanType.PRATA,
-    frequency: null,
-    startedMonthsAgo: 2,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['História', 'Geografia'],
-    guardians: [{ name: 'Renata Pereira', financial: true }],
-  },
-  {
-    name: 'Sophia Carvalho Lima',
-    email: 'sophia.lima@example.com',
-    region: 'cantinho',
-    address: 'Rua dos Pinheiros, 733 — Pinheiros',
-    active: true,
-    planType: PlanType.OURO,
-    frequency: Frequency.TWICE_WEEK,
-    startedMonthsAgo: 5,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Física', 'Matemática'],
-    guardians: [{ name: 'Adriana Carvalho', financial: true }],
-  },
-  {
-    name: 'Miguel Santos Oliveira',
-    email: 'miguel.oliveira@example.com',
-    region: 'vila-da-serra',
-    address: 'Rua Vergueiro, 1500 — Liberdade',
-    active: true,
-    planType: PlanType.AVULSA,
-    frequency: null,
-    startedMonthsAgo: 2,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Redação'],
-    guardians: [{ name: 'Fabiana Santos', financial: true }],
-  },
-  {
-    name: 'Helena Ribeiro Campos',
-    email: 'helena.campos@example.com',
-    region: 'centro-sul',
-    address: 'Rua Voluntários da Pátria, 2540 — Santana',
-    active: true,
-    planType: PlanType.OURO,
-    frequency: Frequency.THREE_TIMES_WEEK,
-    startedMonthsAgo: 4,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: 15,
-    subjects: ['Biologia', 'Química'],
-    guardians: [{ name: 'Luciana Campos', financial: true }],
-  },
-  {
-    name: 'Arthur Mendes Fonseca',
-    email: 'arthur.fonseca@example.com',
-    region: 'cidade-nova',
-    address: 'Rua Haddock Lobo, 300 — Cerqueira César',
-    active: true,
-    planType: PlanType.PRATA,
-    frequency: null,
-    startedMonthsAgo: 6,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Inglês', 'Português'],
-    guardians: [{ name: 'Sandra Mendes', financial: true }],
-  },
-  {
-    name: 'Laura Vasconcelos Pinto',
-    email: 'laura.pinto@example.com',
-    region: 'cantinho',
-    address: 'Av. Ibirapuera, 2500 — Moema',
-    active: true,
-    planType: PlanType.OURO,
-    frequency: Frequency.FIVE_TIMES_WEEK,
-    startedMonthsAgo: 3,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Matemática', 'Física', 'Química'],
-    guardians: [
-      { name: 'Rodrigo Pinto', financial: true },
-      { name: 'Tatiane Vasconcelos', financial: false },
-    ],
-  },
-  {
-    name: 'Bernardo Azevedo Cruz',
-    email: 'bernardo.cruz@example.com',
-    region: 'vila-da-serra',
-    address: 'Av. Engenheiro Caetano Álvares, 900 — Casa Verde',
-    active: true,
-    planType: PlanType.BRONZE,
-    frequency: null,
-    startedMonthsAgo: 3,
-    contractStatus: ContractStatus.CANCELLED,
-    discountPercentage: null,
-    subjects: ['Geografia'],
-    guardians: [{ name: 'Priscila Azevedo', financial: true }],
-  },
-  {
-    name: 'Alice Monteiro Farias',
-    email: 'alice.farias@example.com',
-    region: 'centro-sul',
-    address: 'Rua Bela Cintra, 800 — Consolação',
-    active: true,
-    planType: PlanType.OURO,
-    frequency: Frequency.TWICE_WEEK,
-    startedMonthsAgo: 8,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Português', 'Redação'],
-    guardians: [{ name: 'Denise Monteiro', financial: true }],
-  },
-  {
-    name: 'Theo Cardoso Batista',
-    email: 'theo.batista@example.com',
-    region: 'cidade-nova',
-    address: 'Rua Gomes de Carvalho, 155 — Vila Olímpia',
-    active: true,
-    planType: PlanType.PRATA,
-    frequency: null,
-    startedMonthsAgo: 1,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: 20,
-    subjects: ['Matemática'],
-    guardians: [{ name: 'Camila Cardoso', financial: true }],
-  },
-  {
-    name: 'Manuela Freitas Andrade',
-    email: 'manuela.andrade@example.com',
-    region: 'cantinho',
-    address: 'Rua Tutóia, 450 — Vila Mariana',
-    active: true,
-    planType: PlanType.OURO,
-    frequency: Frequency.THREE_TIMES_WEEK,
-    startedMonthsAgo: 5,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['História', 'Inglês'],
-    guardians: [{ name: 'Aline Freitas', financial: true }],
-  },
-  {
-    name: 'Davi Lucca Ramos',
-    email: 'davi.ramos@example.com',
-    region: 'vila-da-serra',
-    address: 'Rua Cardeal Arcoverde, 1100 — Pinheiros',
-    active: false,
-    planType: PlanType.PRATA,
-    frequency: null,
-    startedMonthsAgo: 7,
-    contractStatus: ContractStatus.CANCELLED,
-    discountPercentage: null,
-    subjects: ['Matemática', 'Biologia'],
-    guardians: [{ name: 'Marcelo Ramos', financial: true }],
-  },
-  {
-    name: 'Cecília Duarte Moreira',
-    email: 'cecilia.moreira@example.com',
-    region: 'centro-sul',
-    address: 'Rua Girassol, 420 — Vila Madalena',
-    active: false,
-    planType: PlanType.BRONZE,
-    frequency: null,
-    startedMonthsAgo: 6,
-    contractStatus: ContractStatus.CANCELLED,
-    discountPercentage: null,
-    subjects: ['Química'],
-    guardians: [{ name: 'Bruna Duarte', financial: true }],
-  },
-  {
-    name: 'Noah Siqueira Barbosa',
-    email: 'noah.barbosa@example.com',
-    region: 'cidade-nova',
-    address: 'Rua Maria Antônia, 310 — Vila Buarque',
-    active: true,
-    planType: PlanType.AVULSA,
-    frequency: null,
-    startedMonthsAgo: 1,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Física'],
-    guardians: [{ name: 'Elaine Siqueira', financial: true }],
-  },
-  {
-    name: 'Valentina Rezende Pires',
-    email: 'valentina.pires@example.com',
-    region: 'cantinho',
-    address: 'Alameda Santos, 900 — Jardim Paulista',
-    active: true,
-    planType: PlanType.OURO,
-    frequency: Frequency.TWICE_WEEK,
-    startedMonthsAgo: 2,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Redação', 'Geografia'],
-    guardians: [{ name: 'Michele Rezende', financial: true }],
-  },
-  {
-    name: 'Aluno Teste',
-    email: 'aluno@teste.com',
-    region: 'cantinho',
-    address: 'Rua de Teste, 100 — Cantinho',
-    active: true,
-    planType: PlanType.OURO,
-    frequency: Frequency.THREE_TIMES_WEEK,
-    startedMonthsAgo: 3,
-    contractStatus: ContractStatus.ACTIVE,
-    discountPercentage: null,
-    subjects: ['Matemática', 'Português'],
-    guardians: [{ name: 'Responsável Teste', financial: true }],
-  },
-];
-
 /* ------------------------------------------------------------------ *
  * Seed
  * ------------------------------------------------------------------ */
-
-async function hash(password: string): Promise<string> {
-  const configured = Number(process.env.BCRYPT_SALT_ROUNDS);
-  const rounds =
-    Number.isInteger(configured) && configured > 0 ? configured : 10;
-  return bcrypt.hash(password, rounds);
-}
 
 async function truncateAll(ds: DataSource): Promise<void> {
   await ds.query(
@@ -850,13 +349,15 @@ async function truncateAll(ds: DataSource): Promise<void> {
 }
 
 async function seed(ds: DataSource): Promise<void> {
-  /*
-   * Ancorado na hora de parede de São Paulo (nowNaive), não no relógio do
-   * processo: garante que o dataset gerado no container (UTC) seja igual ao
-   * gerado numa máquina de desenvolvimento local.
-   */
-  const now = new Date(nowNaive());
-  const today = at(now, 0);
+  /* ---------------- matérias ---------------- */
+
+  const subjectRepository = ds.getRepository(SubjectEntity);
+  const subjects = await subjectRepository.save(
+    SUBJECTS.map((name) => subjectRepository.create({ name })),
+  );
+  const subjectByName = new Map(
+    subjects.map((subject) => [subject.name, subject]),
+  );
 
   /* ---------------- regiões ---------------- */
 
@@ -898,480 +399,126 @@ async function seed(ds: DataSource): Promise<void> {
   ) => `${regionSlug}|${planType}|${frequency ?? 'null'}`;
 
   const planByKey = new Map(
-    plans.map((plan) => [
-      planKey(
-        regions.find((region) => region.id === plan.region.id)!.slug,
-        plan.planType,
-        plan.frequency,
-      ),
+    plans.map((plan, index) => [
+      planKey(PLANS[index].regionSlug, plan.planType, plan.frequency),
       plan,
     ]),
   );
 
-  /* ---------------- disciplinas ---------------- */
-
-  const subjectRepository = ds.getRepository(SubjectEntity);
-  const subjects = await subjectRepository.save(
-    SUBJECTS.map((name) => subjectRepository.create({ name })),
-  );
-  const subjectByName = new Map(
-    subjects.map((subject) => [subject.name, subject]),
-  );
-
-  /* ---------------- usuários ---------------- */
+  /* ---------------- conta admin ---------------- */
 
   const userRepository = ds.getRepository(UserEntity);
-  const fakePasswordHash = await hash(FAKE_PASSWORD);
-  const testPasswordHash = await hash(TEST_ACCOUNTS_PASSWORD);
+  const testPassword = await hashPassword(TEST_ACCOUNTS_PASSWORD);
 
-  /* Contas @teste.com (admin/professor/aluno) usam a senha fixa de teste */
-  const createUser = (name: string, email: string, role: UserRole) =>
+  await userRepository.save(
     userRepository.create({
-      name,
-      email,
-      password: email.endsWith('@teste.com')
-        ? testPasswordHash
-        : fakePasswordHash,
-      role,
-    });
-
-  const admin = await userRepository.save(
-    userRepository.create({
-      name: ADMIN.name,
-      email: ADMIN.email,
-      password: await hash(ADMIN.password),
+      name: 'Admin Teste',
+      email: 'admin@teste.com',
+      password: testPassword,
       role: 'admin',
     }),
   );
 
-  await userRepository.save(
-    createUser('Admin Teste', 'admin@teste.com', 'admin'),
-  );
+  /* ---------------- conta professor — Matemática ---------------- */
 
-  const secondaryAdmin = await userRepository.save(
-    createUser(
-      'Coordenação Cantinho',
-      'coordenacao@cantinhodoestudo.com',
-      'admin',
-    ),
+  const professorUser = await userRepository.save(
+    userRepository.create({
+      name: 'Professor Teste',
+      email: 'prof@teste.com',
+      password: testPassword,
+      role: 'professor',
+    }),
   );
-
-  /* ---------------- professores ---------------- */
 
   const teacherRepository = ds.getRepository(TeacherEntity);
-  const teachers: TeacherEntity[] = [];
+  const teacher = await teacherRepository.save(
+    teacherRepository.create({
+      user: professorUser,
+      bio: 'Conta de teste para desenvolvimento.',
+      subjects: [subjectByName.get('Matemática')!],
+    }),
+  );
 
-  for (const teacherSeed of TEACHERS) {
-    const user = await userRepository.save(
-      createUser(teacherSeed.name, teacherSeed.email, 'professor'),
-    );
-    const teacher = await teacherRepository.save(
-      teacherRepository.create({
-        user,
-        bio: teacherSeed.bio,
-        subjects: teacherSeed.subjects.map((name) => subjectByName.get(name)!),
-      }),
-    );
-    teachers.push(teacher);
-  }
+  /* ---------------- conta aluno — contrato Ouro na Vila da Serra ---------------- */
 
-  /* Professores habilitados em cada disciplina */
-  const teachersBySubject = new Map<string, TeacherEntity[]>();
-  TEACHERS.forEach((teacherSeed, index) => {
-    for (const subjectName of teacherSeed.subjects) {
-      const list = teachersBySubject.get(subjectName) ?? [];
-      list.push(teachers[index]);
-      teachersBySubject.set(subjectName, list);
-    }
-  });
-
-  /* ---------------- alunos, responsáveis, contratos ---------------- */
+  const studentUser = await userRepository.save(
+    userRepository.create({
+      name: 'Aluno Teste',
+      email: 'aluno@teste.com',
+      password: testPassword,
+      role: 'student',
+    }),
+  );
 
   const studentRepository = ds.getRepository(StudentEntity);
-  const guardianRepository = ds.getRepository(GuardianEntity);
+  const student = await studentRepository.save(
+    studentRepository.create({
+      user: studentUser,
+      region: regionBySlug.get(VILA_DA_SERRA_SLUG)!,
+      phone: '(31) 90000-0000',
+      address: null,
+      active: true,
+    }),
+  );
+
+  const ouroPlan = planByKey.get(
+    planKey(VILA_DA_SERRA_SLUG, PlanType.OURO, Frequency.THREE_TIMES_WEEK),
+  )!;
+
   const contractRepository = ds.getRepository(StudentContractEntity);
-  const paymentRepository = ds.getRepository(PaymentEntity);
-  const classRepository = ds.getRepository(ClassEntity);
+  const contractStart = new Date();
+  contractStart.setDate(1);
 
-  let totalGuardians = 0;
-  let totalPayments = 0;
-  const allClasses: ClassEntity[] = [];
-
-  const cantinhoRegion = regionBySlug.get(CANTINHO_REGION_SLUG)!;
-
-  for (const studentSeed of STUDENTS) {
-    const region = regionBySlug.get(studentSeed.region)!;
-
-    const user = await userRepository.save(
-      createUser(studentSeed.name, studentSeed.email, 'student'),
-    );
-
-    const student = await studentRepository.save(
-      studentRepository.create({
-        user,
-        region,
-        phone: phone(),
-        address: studentSeed.address,
-        active: studentSeed.active,
-      }),
-    );
-
-    await guardianRepository.save(
-      studentSeed.guardians.map((guardianSeed) =>
-        guardianRepository.create({
-          student,
-          name: guardianSeed.name,
-          phone: phone(),
-          cpf: cpf(),
-          rg: chance(0.8) ? rg() : null,
-          isFinancialResponsible: guardianSeed.financial,
-        }),
-      ),
-    );
-    totalGuardians += studentSeed.guardians.length;
-
-    const plan = planByKey.get(
-      planKey(studentSeed.region, studentSeed.planType, studentSeed.frequency),
-    )!;
-    const weekdaysConfig = PLAN_WEEKDAYS.find(
-      (item) =>
-        item.planType === studentSeed.planType &&
-        item.frequency === studentSeed.frequency,
-    )!;
-
-    const startDate = at(
-      new Date(
-        now.getFullYear(),
-        now.getMonth() - studentSeed.startedMonthsAgo,
-        randomInt(1, 12),
-      ),
-      0,
-    );
-
-    /* Bronze tem validade de 2 meses; os outros planos são contínuos */
-    const endDate = plan.validityMonths
-      ? at(addMonths(startDate, plan.validityMonths), 0)
-      : studentSeed.contractStatus === ContractStatus.CANCELLED
-        ? at(addMonths(startDate, 3), 0)
-        : null;
-
-    const contract = await contractRepository.save(
-      contractRepository.create({
-        student,
-        plan,
-        startDate: toDateString(startDate),
-        endDate: endDate ? toDateString(endDate) : null,
-        discountPercentage: studentSeed.discountPercentage
-          ? money(studentSeed.discountPercentage)
-          : null,
-        status: studentSeed.contractStatus,
-      }),
-    );
-
-    const discount = (studentSeed.discountPercentage ?? 0) / 100;
-
-    /* ---------------- aulas ---------------- */
-
-    /* Só geramos histórico dos últimos HISTORY_MONTHS meses */
-    const historyStart = at(addMonths(today, -HISTORY_MONTHS), 0);
-    const classesStart = startDate > historyStart ? startDate : historyStart;
-    const classesEnd =
-      endDate && endDate < addDays(today, FUTURE_DAYS)
-        ? endDate
-        : studentSeed.contractStatus === ContractStatus.ACTIVE &&
-            studentSeed.active
-          ? addDays(today, FUTURE_DAYS)
-          : today;
-
-    const classes: ClassEntity[] = [];
-
-    for (
-      let day = new Date(classesStart);
-      day <= classesEnd;
-      day = addDays(day, 1)
-    ) {
-      const weekday = day.getDay();
-      if (!weekdaysConfig.weekdays.includes(weekday)) continue;
-
-      /* Avulsa: aula esporádica, não toda semana */
-      if (studentSeed.planType === PlanType.AVULSA && !chance(0.4)) continue;
-
-      const subjectName = pick(studentSeed.subjects);
-      const subject = subjectByName.get(subjectName)!;
-      const teacher = pick(teachersBySubject.get(subjectName)!);
-
-      const durationMinutes = chance(0.75) ? 60 : chance(0.6) ? 90 : 120;
-      const scheduledAt = at(day, randomInt(8, 19), chance(0.5) ? 0 : 30);
-      const isPast = scheduledAt < now;
-
-      const locationType = studentSeed.address
-        ? chance(0.7)
-          ? LocationType.HOME
-          : LocationType.SCHOOL
-        : LocationType.SCHOOL;
-
-      let status: ClassStatus;
-      if (!isPast) {
-        status = ClassStatus.SCHEDULED;
-      } else if (chance(0.87)) {
-        status = ClassStatus.COMPLETED;
-      } else if (chance(0.6)) {
-        status = ClassStatus.CANCELLED;
-      } else {
-        status = ClassStatus.NO_SHOW;
-      }
-
-      const hours = durationMinutes / 60;
-      const completed = status === ClassStatus.COMPLETED;
-      const billable = (BILLABLE_STATUSES as readonly ClassStatus[]).includes(
-        status,
-      );
-
-      /*
-       * Região da aula: no Cantinho (school) é sempre a região Cantinho, não a
-       * do bairro do aluno; na casa do aluno (home) é a região dele. O valor
-       * cobrado vem do plano equivalente (mesmo tipo/frequência) nessa região
-       * — mesma regra de ClassesService.finalize().
-       */
-      const classRegionSlug =
-        locationType === LocationType.HOME
-          ? studentSeed.region
-          : CANTINHO_REGION_SLUG;
-      const classRegion =
-        locationType === LocationType.HOME ? region : cantinhoRegion;
-      const classPlan = planByKey.get(
-        planKey(classRegionSlug, studentSeed.planType, studentSeed.frequency),
-      )!;
-
-      classes.push(
-        classRepository.create({
-          studentContract: contract,
-          teacher,
-          subject,
-          /* Região e valores só são congelados quando a aula é faturável */
-          region: billable ? classRegion : null,
-          scheduledAt: toTimestampString(scheduledAt),
-          durationMinutes,
-          locationType,
-          status,
-          commissionAmount: billable
-            ? money(Number(classRegion.classCommission) * hours)
-            : null,
-          amountCharged: billable
-            ? money(Number(classPlan.hourPrice) * hours * (1 - discount))
-            : null,
-          notes: completed && chance(0.25) ? pick(CLASS_NOTES) : null,
-        }),
-      );
-    }
-
-    await classRepository.save(classes, { chunk: 200 });
-    allClasses.push(...classes);
-
-    /* ---------------- pagamentos (apurados pelas aulas faturáveis) ---------------- */
-
-    /*
-     * O aluno não tem mensalidade fixa: o valor de cada parcela é a soma do
-     * amount_charged das aulas faturáveis (completed + no_show) cujo
-     * scheduled_at cai no mês do vencimento — mesma regra de
-     * StudentsService.findPaymentHistory(). Meses sem aula faturável não geram
-     * parcela.
-     */
-    const lastBilled = endDate && endDate < today ? endDate : today;
-    const payments: PaymentEntity[] = [];
-    let overdueUsed = false;
-
-    for (
-      let cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-      cursor <= new Date(lastBilled.getFullYear(), lastBilled.getMonth(), 1);
-      cursor = addMonths(cursor, 1)
-    ) {
-      const dueDate = at(
-        new Date(cursor.getFullYear(), cursor.getMonth(), 10),
-        0,
-      );
-      const monthKey = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}`;
-      const amount = classes
-        .filter(
-          (item) =>
-            (BILLABLE_STATUSES as readonly ClassStatus[]).includes(
-              item.status,
-            ) && item.scheduledAt.startsWith(monthKey),
-        )
-        .reduce((total, item) => total + Number(item.amountCharged ?? 0), 0);
-
-      if (amount === 0) {
-        /* Sem aula faturável nessa competência: não há o que cobrar */
-        continue;
-      }
-
-      const isCurrentMonth =
-        dueDate.getFullYear() === today.getFullYear() &&
-        dueDate.getMonth() === today.getMonth();
-
-      let status: PaymentStatus;
-      let paidAt: string | null = null;
-
-      if (
-        studentSeed.contractStatus === ContractStatus.CANCELLED &&
-        isCurrentMonth
-      ) {
-        status = PaymentStatus.CANCELLED;
-      } else if (isCurrentMonth) {
-        /* Mês corrente: metade já pagou, metade em aberto */
-        if (chance(0.5) && dueDate <= today) {
-          status = PaymentStatus.PAID;
-          paidAt = toTimestampString(
-            at(addDays(dueDate, -randomInt(0, 4)), randomInt(9, 18)),
-          );
-        } else {
-          status = PaymentStatus.PENDING;
-        }
-      } else if (!overdueUsed && chance(0.12)) {
-        /* Uma inadimplência ocasional no histórico */
-        status = PaymentStatus.OVERDUE;
-        overdueUsed = true;
-      } else {
-        status = PaymentStatus.PAID;
-        paidAt = toTimestampString(
-          at(addDays(dueDate, randomInt(-5, 3)), randomInt(9, 19)),
-        );
-      }
-
-      payments.push(
-        paymentRepository.create({
-          studentContract: contract,
-          amount: money(amount),
-          dueDate: toDateString(dueDate),
-          paidAt,
-          status,
-        }),
-      );
-    }
-
-    await paymentRepository.save(payments);
-    totalPayments += payments.length;
-  }
-
-  /* ---------------- aulas de hoje ainda por acontecer ---------------- */
+  const contract = await contractRepository.save(
+    contractRepository.create({
+      student,
+      plan: ouroPlan,
+      startDate: toDateString(contractStart),
+      endDate: null,
+      discountPercentage: null,
+      status: ContractStatus.ACTIVE,
+    }),
+  );
 
   /*
-   * Garante conteúdo em GET /classes/today/upcoming independentemente da hora
-   * em que o seed rodar: três aulas hoje, à frente do horário atual.
+   * Uma mensalidade em aberto para o mês corrente — sem ela a tela financeira
+   * do aluno nasce vazia. O valor real de cada parcela é apurado pelas aulas
+   * do mês (StudentsService.findPaymentHistory()), não pela coluna
+   * `payments.amount`; como o aluno ainda não tem aulas, ela nasce em 0 —
+   * mesma regra do contract:create.
    */
-  const activeContracts = await contractRepository.find({
-    where: { status: ContractStatus.ACTIVE },
-    relations: { student: { region: true, user: true }, plan: true },
-  });
-
-  const todayClasses: ClassEntity[] = [];
-  for (let index = 0; index < 3; index += 1) {
-    const contract = activeContracts[index % activeContracts.length];
-    const studentSeed = STUDENTS.find(
-      (item) => item.email === contract.student.user.email,
-    )!;
-    const subjectName = pick(studentSeed.subjects);
-    const scheduledAt = new Date(now.getTime() + (45 + index * 60) * 60 * 1000);
-
-    todayClasses.push(
-      classRepository.create({
-        studentContract: contract,
-        teacher: pick(teachersBySubject.get(subjectName)!),
-        subject: subjectByName.get(subjectName)!,
-        region: null,
-        scheduledAt: toTimestampString(scheduledAt),
-        durationMinutes: 60,
-        locationType: studentSeed.address
-          ? LocationType.HOME
-          : LocationType.SCHOOL,
-        status: ClassStatus.SCHEDULED,
-        commissionAmount: null,
-        amountCharged: null,
-        notes: null,
-      }),
-    );
-  }
-  await classRepository.save(todayClasses);
-  allClasses.push(...todayClasses);
-
-  /* ---------------- links de convite ---------------- */
-
-  const inviteRepository = ds.getRepository(InviteLinkEntity);
-  const invites = await inviteRepository.save([
-    inviteRepository.create({
-      createdBy: admin,
-      token: token(),
-      targetRole: TargetRole.STUDENT,
-      discountPercentage: money(10),
-      expiresAt: toTimestampString(at(addDays(today, 15), 23, 59)),
-      used: false,
+  const paymentRepository = ds.getRepository(PaymentEntity);
+  await paymentRepository.save(
+    paymentRepository.create({
+      studentContract: contract,
+      amount: money(0),
+      dueDate: toDateString(
+        new Date(
+          contractStart.getFullYear(),
+          contractStart.getMonth(),
+          DUE_DAY,
+        ),
+      ),
+      paidAt: null,
+      status: PaymentStatus.PENDING,
     }),
-    inviteRepository.create({
-      createdBy: admin,
-      token: token(),
-      targetRole: TargetRole.STUDENT,
-      discountPercentage: null,
-      expiresAt: toTimestampString(at(addDays(today, 7), 23, 59)),
-      used: false,
-    }),
-    inviteRepository.create({
-      createdBy: admin,
-      token: token(),
-      targetRole: TargetRole.PROFESSOR,
-      discountPercentage: null,
-      expiresAt: toTimestampString(at(addDays(today, 30), 23, 59)),
-      used: false,
-    }),
-    inviteRepository.create({
-      createdBy: secondaryAdmin,
-      token: token(),
-      targetRole: TargetRole.STUDENT,
-      discountPercentage: money(20),
-      expiresAt: toTimestampString(at(addDays(today, -3), 23, 59)),
-      used: true,
-    }),
-  ]);
-
-  /* ---------------- resumo ---------------- */
-
-  const completed = allClasses.filter(
-    (item) => item.status === ClassStatus.COMPLETED,
   );
 
   console.log('');
-  console.log('Seed concluído:');
-  console.log(`  regiões............. ${regions.length}`);
-  console.log(`  planos.............. ${plans.length}`);
-  console.log(`  disciplinas......... ${subjects.length}`);
-  console.log(
-    `  usuários............ ${3 + TEACHERS.length + STUDENTS.length}`,
-  );
-  console.log(`  professores......... ${teachers.length}`);
-  console.log(`  alunos.............. ${STUDENTS.length}`);
-  console.log(`  responsáveis........ ${totalGuardians}`);
-  console.log(`  contratos........... ${STUDENTS.length}`);
-  console.log(`  pagamentos.......... ${totalPayments}`);
-  console.log(
-    `  aulas............... ${allClasses.length} (${completed.length} concluídas)`,
-  );
-  console.log(`  links de convite.... ${invites.length}`);
+  console.log(`Matérias............ ${subjects.length}`);
+  console.log(`Regiões.............. ${regions.length}`);
+  console.log(`Planos............... ${plans.length}`);
   console.log('');
-  console.log(`Admin: ${ADMIN.email} / ${ADMIN.password}`);
+  console.log(`Contas de teste (senha: ${TEST_ACCOUNTS_PASSWORD}):`);
+  console.log('  admin@teste.com');
   console.log(
-    `Contas de teste (admin@teste.com, prof@teste.com, aluno@teste.com): senha ${TEST_ACCOUNTS_PASSWORD}`,
+    `  prof@teste.com  — vinculado a Matemática (teacher_id ${teacher.id})`,
   );
-  console.log(`Demais usuários: senha ${FAKE_PASSWORD}`);
+  console.log(
+    `  aluno@teste.com — região Vila da Serra, contrato Ouro 3x/semana (contract_id ${contract.id})`,
+  );
   console.log('');
 }
-
-const CLASS_NOTES = [
-  'Aluno evoluiu bem nos exercícios de fixação.',
-  'Revisão para a prova bimestral.',
-  'Ficou de dever de casa a lista 3.',
-  'Aluno chegou 10 minutos atrasado.',
-  'Conteúdo novo introduzido, precisa reforço na próxima aula.',
-  'Simulado corrigido em aula.',
-];
 
 async function main(): Promise<void> {
   if (process.env.NODE_ENV === 'production') {

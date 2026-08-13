@@ -3,6 +3,7 @@ import { DataSource, EntityManager, ILike } from 'typeorm';
 import dataSource from '../data-source';
 import { TeacherEntity } from '../../../teachers/entity/teacher.entity';
 import { SubjectEntity } from '../../../subjects/entity/subject.entity';
+import { parseArgs, resolveTeacher, withDataSource } from './helpers';
 
 /*
  * Cria uma ou mais disciplinas e vincula a um professor já existente, sem
@@ -36,9 +37,6 @@ Exemplos:
   npm run subject:create -- --teacher 8f14e45f-ceea-467a-9d1b-1a0f9b6b5c21 --names "Física, Química"
 `.trim();
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 const NAME_MAX_LENGTH = 100;
 
 interface Options {
@@ -50,31 +48,6 @@ interface Options {
 /* ------------------------------------------------------------------ *
  * Argumentos
  * ------------------------------------------------------------------ */
-
-/* Aceita apenas o formato `--chave valor`, que é o que os exemplos usam. */
-function parseArgs(argv: string[]): Record<string, string> {
-  const args: Record<string, string> = {};
-
-  for (let index = 0; index < argv.length; index++) {
-    const current = argv[index];
-
-    if (!current.startsWith('--')) {
-      continue;
-    }
-
-    const key = current.slice(2);
-    const value = argv[index + 1];
-
-    if (!value || value.startsWith('--')) {
-      throw new Error(`A flag --${key} está sem valor`);
-    }
-
-    args[key] = value;
-    index++;
-  }
-
-  return args;
-}
 
 function parseNames(raw: string | undefined): string[] {
   if (!raw) {
@@ -118,61 +91,6 @@ function parseOptions(argv: string[]): Options {
   };
 }
 
-/* ------------------------------------------------------------------ *
- * Resolução dos dados existentes
- * ------------------------------------------------------------------ */
-
-async function resolveTeacher(
-  manager: EntityManager,
-  options: Options,
-): Promise<TeacherEntity> {
-  const teacherRepository = manager.getRepository(TeacherEntity);
-  const relations = { user: true, subjects: true };
-
-  if (options.email) {
-    const teacher = await teacherRepository.findOne({
-      where: { user: { email: options.email } },
-      relations,
-    });
-
-    if (!teacher) {
-      throw new Error(
-        `Nenhum professor com o e-mail "${options.email}". Crie com ` +
-          '`npm run user:create -- ... --role professor`.',
-      );
-    }
-
-    return teacher;
-  }
-
-  const id = options.teacher!;
-
-  /* Filtrar por uuid inválido estoura no Postgres antes de virar "não achei" */
-  if (!UUID_PATTERN.test(id)) {
-    throw new Error(`--teacher precisa ser um uuid (recebi "${id}")`);
-  }
-
-  /*
-   * Aceita tanto o id da linha em `teachers` quanto o id do usuário: o painel
-   * do admin lida com o primeiro, e o token de login carrega o segundo.
-   */
-  const teacher =
-    (await teacherRepository.findOne({ where: { id }, relations })) ??
-    (await teacherRepository.findOne({
-      where: { user: { id } },
-      relations,
-    }));
-
-  if (!teacher) {
-    throw new Error(
-      `Nenhum professor com id (nem user_id) ${id}. Confira em ` +
-        '`select t.id, t.user_id, u.name from teachers t join users u on u.id = t.user_id`.',
-    );
-  }
-
-  return teacher;
-}
-
 /*
  * Reaproveita a disciplina se já existir uma com o mesmo nome (comparação
  * sem diferenciar maiúsculas/minúsculas), senão cria uma nova.
@@ -211,10 +129,7 @@ async function resolveOrCreateSubjects(
  * Tudo dentro de uma transação: se o vínculo com o professor falhar, a
  * disciplina recém-criada não fica órfã no banco.
  */
-async function createSubjects(
-  ds: DataSource,
-  options: Options,
-): Promise<void> {
+async function createSubjects(ds: DataSource, options: Options): Promise<void> {
   await ds.transaction(async (manager) => {
     const teacher = await resolveTeacher(manager, options);
     const resolved = await resolveOrCreateSubjects(manager, options.names);
@@ -274,13 +189,7 @@ async function main(): Promise<void> {
   }
 
   const options = parseOptions(process.argv.slice(2));
-  const ds = await dataSource.initialize();
-
-  try {
-    await createSubjects(ds, options);
-  } finally {
-    await ds.destroy();
-  }
+  await withDataSource(dataSource, (ds) => createSubjects(ds, options));
 }
 
 main().catch((error: Error) => {

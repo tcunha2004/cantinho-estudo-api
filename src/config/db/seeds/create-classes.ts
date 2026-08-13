@@ -14,6 +14,16 @@ import {
 } from '../../../classes/enums/class-status.enum';
 import { LocationType } from '../../../classes/enums/location-type.enum';
 import { PaymentEntity } from '../../../payments/entity/payment.entity';
+import {
+  addDays,
+  at,
+  money,
+  parseArgs,
+  resolveTeacher,
+  toDateString,
+  toTimestampString,
+  withDataSource,
+} from './helpers';
 
 /*
  * Aula no Cantinho sempre usa a tabela desta região, não a do bairro do aluno
@@ -69,9 +79,6 @@ Exemplos:
   npm run classes:create -- --teacher 8f14e45f-ceea-467a-9d1b-1a0f9b6b5c21 --days 30
 `.trim();
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 interface Options {
   teacher?: string;
   email?: string;
@@ -83,31 +90,6 @@ interface Options {
 /* ------------------------------------------------------------------ *
  * Argumentos
  * ------------------------------------------------------------------ */
-
-/* Aceita apenas o formato `--chave valor`, que é o que os exemplos usam. */
-function parseArgs(argv: string[]): Record<string, string> {
-  const args: Record<string, string> = {};
-
-  for (let index = 0; index < argv.length; index++) {
-    const current = argv[index];
-
-    if (!current.startsWith('--')) {
-      continue;
-    }
-
-    const key = current.slice(2);
-    const value = argv[index + 1];
-
-    if (!value || value.startsWith('--')) {
-      throw new Error(`A flag --${key} está sem valor`);
-    }
-
-    args[key] = value;
-    index++;
-  }
-
-  return args;
-}
 
 function parseCount(
   raw: string | undefined,
@@ -151,7 +133,7 @@ function parseOptions(argv: string[]): Options {
 }
 
 /* ------------------------------------------------------------------ *
- * Utilidades (mesmas do seed)
+ * Utilidades específicas deste script
  * ------------------------------------------------------------------ */
 
 /* PRNG com semente fixa (LCG) — mantém a geração reproduzível */
@@ -171,39 +153,6 @@ function chance(probability: number): boolean {
 
 function randomInt(min: number, max: number): number {
   return min + Math.floor(random() * (max - min + 1));
-}
-
-function money(value: number): string {
-  return value.toFixed(2);
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-function toDateString(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-/*
- * 'YYYY-MM-DD HH:mm:ss' no fuso local (colunas timestamp without time zone).
- * Passar string evita o driver converter a Date para UTC e deslocar o horário
- * da aula em relação ao que as queries de período esperam.
- */
-function toTimestampString(date: Date): string {
-  return `${toDateString(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
-}
-
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
-
-function at(date: Date, hour: number, minute = 0): Date {
-  const result = new Date(date);
-  result.setHours(hour, minute, 0, 0);
-  return result;
 }
 
 const CLASS_NOTES = [
@@ -230,57 +179,6 @@ function spreadDayOffsets(count: number, days: number): number[] {
 /* ------------------------------------------------------------------ *
  * Resolução dos dados existentes
  * ------------------------------------------------------------------ */
-
-async function resolveTeacher(
-  manager: EntityManager,
-  options: Options,
-): Promise<TeacherEntity> {
-  const teacherRepository = manager.getRepository(TeacherEntity);
-  const relations = { user: true, subjects: true };
-
-  if (options.email) {
-    const teacher = await teacherRepository.findOne({
-      where: { user: { email: options.email } },
-      relations,
-    });
-
-    if (!teacher) {
-      throw new Error(
-        `Nenhum professor com o e-mail "${options.email}". Crie com ` +
-          '`npm run user:create -- ... --role professor`.',
-      );
-    }
-
-    return teacher;
-  }
-
-  const id = options.teacher!;
-
-  /* Filtrar por uuid inválido estoura no Postgres antes de virar "não achei" */
-  if (!UUID_PATTERN.test(id)) {
-    throw new Error(`--teacher precisa ser um uuid (recebi "${id}")`);
-  }
-
-  /*
-   * Aceita tanto o id da linha em `teachers` quanto o id do usuário: o painel
-   * do admin lida com o primeiro, e o token de login carrega o segundo.
-   */
-  const teacher =
-    (await teacherRepository.findOne({ where: { id }, relations })) ??
-    (await teacherRepository.findOne({
-      where: { user: { id } },
-      relations,
-    }));
-
-  if (!teacher) {
-    throw new Error(
-      `Nenhum professor com id (nem user_id) ${id}. Confira em ` +
-        '`select t.id, t.user_id, u.name from teachers t join users u on u.id = t.user_id`.',
-    );
-  }
-
-  return teacher;
-}
 
 async function resolveSubjects(
   manager: EntityManager,
@@ -671,13 +569,7 @@ async function main(): Promise<void> {
   }
 
   const options = parseOptions(process.argv.slice(2));
-  const ds = await dataSource.initialize();
-
-  try {
-    await createClasses(ds, options);
-  } finally {
-    await ds.destroy();
-  }
+  await withDataSource(dataSource, (ds) => createClasses(ds, options));
 }
 
 main().catch((error: Error) => {

@@ -1,11 +1,11 @@
 import 'dotenv/config';
-import * as bcrypt from 'bcrypt';
 import { DataSource, EntityManager } from 'typeorm';
 import dataSource from '../data-source';
 import { UserEntity, UserRole } from '../../../users/entity/user.entity';
 import { RegionEntity } from '../../../regions/entity/region.entity';
 import { TeacherEntity } from '../../../teachers/entity/teacher.entity';
 import { StudentEntity } from '../../../students/entity/student.entity';
+import { hashPassword, parseArgs, withDataSource } from './helpers';
 
 /*
  * Cria um único usuário no banco, sem apagar nada — ao contrário do seed, que
@@ -51,31 +51,6 @@ interface Options {
   phone?: string;
 }
 
-/* Aceita apenas o formato `--chave valor`, que é o que os exemplos usam. */
-function parseArgs(argv: string[]): Record<string, string> {
-  const args: Record<string, string> = {};
-
-  for (let index = 0; index < argv.length; index++) {
-    const current = argv[index];
-
-    if (!current.startsWith('--')) {
-      continue;
-    }
-
-    const key = current.slice(2);
-    const value = argv[index + 1];
-
-    if (!value || value.startsWith('--')) {
-      throw new Error(`A flag --${key} está sem valor`);
-    }
-
-    args[key] = value;
-    index++;
-  }
-
-  return args;
-}
-
 function parseOptions(argv: string[]): Options {
   const args = parseArgs(argv);
   const missing = ['name', 'email', 'password', 'role'].filter(
@@ -113,14 +88,6 @@ function parseOptions(argv: string[]): Options {
     region: args.region,
     phone: args.phone,
   };
-}
-
-/* Mesma regra de custo usada pelo seed */
-async function hash(password: string): Promise<string> {
-  const configured = Number(process.env.BCRYPT_SALT_ROUNDS);
-  const rounds =
-    Number.isInteger(configured) && configured > 0 ? configured : 10;
-  return bcrypt.hash(password, rounds);
 }
 
 async function resolveRegion(
@@ -183,7 +150,7 @@ async function createUser(ds: DataSource, options: Options): Promise<void> {
       userRepository.create({
         name: options.name,
         email: options.email,
-        password: await hash(options.password),
+        password: await hashPassword(options.password),
         role: options.role,
       }),
     );
@@ -225,13 +192,7 @@ async function main(): Promise<void> {
   }
 
   const options = parseOptions(process.argv.slice(2));
-  const ds = await dataSource.initialize();
-
-  try {
-    await createUser(ds, options);
-  } finally {
-    await ds.destroy();
-  }
+  await withDataSource(dataSource, (ds) => createUser(ds, options));
 }
 
 main().catch((error: Error) => {

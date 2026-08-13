@@ -9,6 +9,20 @@ import { ContractStatus } from '../../../student-contracts/enums/contract-status
 import { PaymentStatus } from '../../../payments/enums/payment-status.enum';
 import { PlanType } from '../../../plans/enums/plan-type.enum';
 import { Frequency } from '../../../plans/enums/frequency.enum';
+import {
+  addMonths,
+  at,
+  fromDateString,
+  money,
+  parseArgs,
+  parseBoolean,
+  parseDate,
+  resolveStudent,
+  toDateString,
+  toTimestampString,
+  UUID_PATTERN,
+  withDataSource,
+} from './helpers';
 
 /*
  * Cria um contrato para um aluno já existente, sem apagar nada — ao contrário do
@@ -71,11 +85,6 @@ Exemplos:
   npm run contract:create -- --email caio@escola.com --plan-type ouro --frequency 5 --expire-current yes
 `.trim();
 
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
 interface Options {
   student?: string;
   email?: string;
@@ -91,112 +100,8 @@ interface Options {
 }
 
 /* ------------------------------------------------------------------ *
- * Utilidades (mesmas do seed)
- * ------------------------------------------------------------------ */
-
-function money(value: number): string {
-  return value.toFixed(2);
-}
-
-function pad(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-/* 'YYYY-MM-DD' no fuso local (colunas date) */
-function toDateString(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-/*
- * 'YYYY-MM-DD HH:mm:ss' no fuso local (colunas timestamp without time zone).
- * Passar string evita o driver converter a Date para UTC e deslocar a data do
- * pagamento em relação ao que as queries de período esperam.
- */
-function toTimestampString(date: Date): string {
-  return `${toDateString(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}:00`;
-}
-
-function addMonths(date: Date, months: number): Date {
-  const result = new Date(date);
-  result.setMonth(result.getMonth() + months);
-  return result;
-}
-
-function at(date: Date, hour: number, minute = 0): Date {
-  const result = new Date(date);
-  result.setHours(hour, minute, 0, 0);
-  return result;
-}
-
-/* Meia-noite local a partir de 'YYYY-MM-DD' — new Date(iso) leria como UTC */
-function fromDateString(value: string): Date {
-  const [year, month, day] = value.split('-').map(Number);
-  return new Date(year, month - 1, day);
-}
-
-/* ------------------------------------------------------------------ *
  * Argumentos
  * ------------------------------------------------------------------ */
-
-/* Aceita apenas o formato `--chave valor`, que é o que os exemplos usam. */
-function parseArgs(argv: string[]): Record<string, string> {
-  const args: Record<string, string> = {};
-
-  for (let index = 0; index < argv.length; index++) {
-    const current = argv[index];
-
-    if (!current.startsWith('--')) {
-      continue;
-    }
-
-    const key = current.slice(2);
-    const value = argv[index + 1];
-
-    if (!value || value.startsWith('--')) {
-      throw new Error(`A flag --${key} está sem valor`);
-    }
-
-    args[key] = value;
-    index++;
-  }
-
-  return args;
-}
-
-function parseBoolean(
-  raw: string | undefined,
-  fallback: boolean,
-  flag: string,
-): boolean {
-  if (raw === undefined) {
-    return fallback;
-  }
-
-  const value = raw.toLowerCase();
-
-  if (['yes', 'y', 'true', 'sim', 's', '1'].includes(value)) {
-    return true;
-  }
-
-  if (['no', 'n', 'false', 'nao', 'não', '0'].includes(value)) {
-    return false;
-  }
-
-  throw new Error(`--${flag} precisa ser yes ou no (recebi "${raw}")`);
-}
-
-function parseDate(raw: string, flag: string): string {
-  if (!DATE_PATTERN.test(raw)) {
-    throw new Error(`--${flag} precisa estar no formato YYYY-MM-DD`);
-  }
-
-  /* Rejeita datas do tipo 2026-02-31, que o Postgres recusaria depois */
-  if (toDateString(fromDateString(raw)) !== raw) {
-    throw new Error(`--${flag} não é uma data válida: "${raw}"`);
-  }
-
-  return raw;
-}
 
 function parsePlanType(raw: string | undefined): PlanType {
   if (raw === undefined) {
@@ -335,54 +240,6 @@ function parseOptions(argv: string[]): Options {
 /* ------------------------------------------------------------------ *
  * Resolução dos dados existentes
  * ------------------------------------------------------------------ */
-
-async function resolveStudent(
-  manager: EntityManager,
-  options: Options,
-): Promise<StudentEntity> {
-  const studentRepository = manager.getRepository(StudentEntity);
-  const relations = { user: true, region: true };
-
-  if (options.email) {
-    const student = await studentRepository.findOne({
-      where: { user: { email: options.email } },
-      relations,
-    });
-
-    if (!student) {
-      throw new Error(
-        `Nenhum aluno com o e-mail "${options.email}". Crie com ` +
-          '`npm run user:create -- ... --role student`.',
-      );
-    }
-
-    return student;
-  }
-
-  const id = options.student!;
-
-  /* Filtrar por uuid inválido estoura no Postgres antes de virar "não achei" */
-  if (!UUID_PATTERN.test(id)) {
-    throw new Error(`--student precisa ser um uuid (recebi "${id}")`);
-  }
-
-  /*
-   * Aceita tanto o id da linha em `students` quanto o id do usuário: o painel
-   * do admin lida com o primeiro, e o token de login carrega o segundo.
-   */
-  const student =
-    (await studentRepository.findOne({ where: { id }, relations })) ??
-    (await studentRepository.findOne({ where: { user: { id } }, relations }));
-
-  if (!student) {
-    throw new Error(
-      `Nenhum aluno com id (nem user_id) ${id}. Confira em ` +
-        '`select s.id, s.user_id, u.name from students s join users u on u.id = s.user_id`.',
-    );
-  }
-
-  return student;
-}
 
 /*
  * O plano vem da região do aluno, porque `plans` tem um conjunto por região e
@@ -705,13 +562,7 @@ async function main(): Promise<void> {
   }
 
   const options = parseOptions(process.argv.slice(2));
-  const ds = await dataSource.initialize();
-
-  try {
-    await createContract(ds, options);
-  } finally {
-    await ds.destroy();
-  }
+  await withDataSource(dataSource, (ds) => createContract(ds, options));
 }
 
 main().catch((error: Error) => {
