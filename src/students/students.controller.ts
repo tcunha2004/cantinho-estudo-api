@@ -9,7 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { StudentsService } from './students.service';
-import { ActiveStudentDto } from './dto/active-student.dto';
+import { CompactStudentDto } from './dto/compact-student.dto';
 import { StudentPlanDto } from './dto/student-plan.dto';
 import { PlanSummaryDto } from './dto/plan-summary.dto';
 import { PaymentHistoryDto } from './dto/payment-history.dto';
@@ -35,8 +35,15 @@ export class StudentsController {
 
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin')
+  @Get('all')
+  public async findAll(): Promise<CompactStudentDto[]> {
+    return await this.studentsService.findAll();
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
   @Get('active')
-  public async findAllActive(): Promise<ActiveStudentDto[]> {
+  public async findAllActive(): Promise<CompactStudentDto[]> {
     return await this.studentsService.findAllActive();
   }
 

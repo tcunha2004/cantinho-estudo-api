@@ -17,7 +17,7 @@ import { ClassEntity } from '../classes/entity/class.entity';
 import { UserEntity } from '../users/entity/user.entity';
 import { BILLABLE_STATUSES } from '../classes/enums/class-status.enum';
 import { getMonthRange } from '../utils/date-range.util';
-import { ActiveStudentDto } from './dto/active-student.dto';
+import { CompactStudentDto, StudentStatus } from './dto/compact-student.dto';
 import { StudentPlanDto } from './dto/student-plan.dto';
 import { PlanSummaryDto } from './dto/plan-summary.dto';
 import { PaymentHistoryDto } from './dto/payment-history.dto';
@@ -81,9 +81,8 @@ export class StudentsService {
     return await this.studentRepository.count({ where: { active: true } });
   }
 
-  public async findAllActive(): Promise<ActiveStudentDto[]> {
+  public async findAll(): Promise<CompactStudentDto[]> {
     const students = await this.studentRepository.find({
-      where: { active: true },
       relations: {
         user: true,
         guardians: true,
@@ -91,7 +90,6 @@ export class StudentsService {
         contracts: { plan: true },
       },
     });
-
     return students
       .map((student) => {
         const guardian = this.pickGuardian(student.guardians);
@@ -100,6 +98,9 @@ export class StudentsService {
         return {
           id: student.id,
           name: student.user.name,
+          status: student.active
+            ? StudentStatus.ACTIVE
+            : StudentStatus.INACTIVE,
           guardian: guardian?.name ?? null,
           plan: contract?.plan.planType ?? null,
           frequency: contract?.plan.frequency ?? null,
@@ -108,6 +109,13 @@ export class StudentsService {
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  public async findAllActive(): Promise<CompactStudentDto[]> {
+    const allstudents = await this.findAll();
+    return allstudents.filter(
+      (student) => student.contractStatus === ContractStatus.ACTIVE,
+    );
   }
 
   /* Dados completos de um aluno para o modal de visualização/edição do admin. */
