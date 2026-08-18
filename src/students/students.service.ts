@@ -383,8 +383,18 @@ export class StudentsService {
   ): Promise<PaymentHistoryDto[]> {
     const student = await this.findStudentByUserId(userId, {});
 
+    return await this.findPaymentsByStudent(student.id);
+  }
+
+  /*
+   * Mesmo histórico de parcelas, buscado pelo id do aluno — é o que o admin vê
+   * no modal financeiro. `findPaymentHistory` é a versão pelo token do aluno.
+   */
+  public async findPaymentsByStudent(
+    studentId: string,
+  ): Promise<PaymentHistoryDto[]> {
     const payments = await this.paymentRepository.find({
-      where: { studentContract: { student: { id: student.id } } },
+      where: { studentContract: { student: { id: studentId } } },
       relations: { studentContract: { plan: true } },
       order: { dueDate: 'DESC' },
     });
@@ -398,6 +408,7 @@ export class StudentsService {
 
         return {
           id: payment.id,
+          contractId: payment.studentContract.id,
           amount,
           dueDate: payment.dueDate,
           paidAt: payment.paidAt,

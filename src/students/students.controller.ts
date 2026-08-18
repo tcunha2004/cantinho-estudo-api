@@ -89,4 +89,18 @@ export class StudentsController {
   ): Promise<PaymentHistoryDto[]> {
     return await this.studentsService.findPaymentHistory(request.user.sub);
   }
+
+  /*
+   * Histórico financeiro de um aluno para o admin. Precisa vir depois de
+   * `me/payments`: declarado antes, o `:id` casaria com "me" e o portal do
+   * aluno quebraria com 400 no ParseUUIDPipe.
+   */
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
+  @Get(':id/payments')
+  public async findPaymentsByStudent(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<PaymentHistoryDto[]> {
+    return await this.studentsService.findPaymentsByStudent(id);
+  }
 }
