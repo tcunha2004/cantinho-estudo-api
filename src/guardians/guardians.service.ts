@@ -38,4 +38,16 @@ export class GuardiansService {
       where: { student: { id: studentId } },
     });
   }
+
+  public async update(
+    id: string,
+    data: {
+      name?: string;
+      phone?: string;
+      cpf?: string;
+      isFinancialResponsible?: boolean;
+    },
+  ): Promise<void> {
+    await this.guardianRepository.update(id, data);
+  }
 }

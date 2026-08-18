@@ -1,18 +1,27 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { FindOptionsRelations, IsNull, Repository } from 'typeorm';
 import { StudentEntity } from './entity/student.entity';
 import { StudentContractEntity } from '../student-contracts/entity/student-contract.entity';
+import { StudentContractsService } from '../student-contracts/student-contracts.service';
 import { GuardianEntity } from '../guardians/entity/guardian.entity';
+import { GuardiansService } from '../guardians/guardians.service';
 import { PlanEntity } from '../plans/entity/plan.entity';
 import { PaymentEntity } from '../payments/entity/payment.entity';
 import { ClassEntity } from '../classes/entity/class.entity';
+import { UserEntity } from '../users/entity/user.entity';
 import { BILLABLE_STATUSES } from '../classes/enums/class-status.enum';
 import { getMonthRange } from '../utils/date-range.util';
 import { ActiveStudentDto } from './dto/active-student.dto';
 import { StudentPlanDto } from './dto/student-plan.dto';
 import { PlanSummaryDto } from './dto/plan-summary.dto';
 import { PaymentHistoryDto } from './dto/payment-history.dto';
+import { StudentDetailDto } from './dto/student-detail.dto';
+import { UpdateStudentDto } from './dto/update-student.dto';
 
 /*
  * Aula no Cantinho sempre usa a tabela desta região, não a do bairro do aluno
@@ -23,6 +32,15 @@ const CANTINHO_REGION_SLUG = 'cantinho';
 /* Valor monetário como o banco guarda: decimal(10,2) em string. */
 function money(value: number): string {
   return value.toFixed(2);
+}
+
+/*
+ * Desconto como o banco guarda: decimal(5,2) em string. Normaliza antes de
+ * comparar com o valor atual do contrato, senão "10" nunca bate com "10.00" e
+ * cria um contrato novo à toa a cada salvamento.
+ */
+function normalizeDiscount(value: string | null): string | null {
+  return value === null ? null : Number(value).toFixed(2);
 }
 
 @Injectable()
@@ -36,6 +54,10 @@ export class StudentsService {
     private readonly paymentRepository: Repository<PaymentEntity>,
     @InjectRepository(ClassEntity)
     private readonly classRepository: Repository<ClassEntity>,
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
+    private readonly studentContractsService: StudentContractsService,
+    private readonly guardiansService: GuardiansService,
   ) {}
 
   public async countActive(): Promise<number> {
@@ -69,6 +91,153 @@ export class StudentsService {
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /* Dados completos de um aluno para o modal de visualização/edição do admin. */
+  public async findById(id: string): Promise<StudentDetailDto> {
+    const student = await this.studentRepository.findOne({
+      where: { id },
+      relations: {
+        user: true,
+        region: true,
+        guardians: true,
+        contracts: { plan: true },
+      },
+    });
+
+    if (!student) {
+      throw new NotFoundException('Aluno não encontrado');
+    }
+
+    return {
+      id: student.id,
+      name: student.user.name,
+      email: student.user.email,
+      phone: student.phone,
+      address: student.address,
+      active: student.active,
+      region: { id: student.region.id, name: student.region.name },
+      guardians: student.guardians.map((guardian) => ({
+        name: guardian.name,
+        phone: guardian.phone,
+        cpf: guardian.cpf,
+        isFinancialResponsible: guardian.isFinancialResponsible,
+      })),
+      contracts: [...student.contracts]
+        .sort((a, b) => b.startDate.localeCompare(a.startDate))
+        .map((contract) => ({
+          id: contract.id,
+          planId: contract.plan.id,
+          planType: contract.plan.planType,
+          frequency: contract.plan.frequency,
+          status: contract.status,
+          startDate: contract.startDate,
+          endDate: contract.endDate,
+          discountPercentage: contract.discountPercentage,
+        })),
+    };
+  }
+
+  /*
+   * Edita os dados cadastrais do aluno (nome/email vivem no usuário, o resto
+   * na própria tabela), o contrato atual (status muta; plano/desconto
+   * versionam — ver StudentContractsService) e o responsável financeiro. Só
+   * altera o que veio no dto.
+   */
+  public async update(
+    id: string,
+    dto: UpdateStudentDto,
+  ): Promise<StudentDetailDto> {
+    const student = await this.studentRepository.findOne({
+      where: { id },
+      relations: { user: true, guardians: true, contracts: { plan: true } },
+    });
+
+    if (!student) {
+      throw new NotFoundException('Aluno não encontrado');
+    }
+
+    const {
+      name,
+      email,
+      phone,
+      address,
+      regionId,
+      active,
+      contractStatus,
+      planId,
+      discountPercentage,
+      guardian,
+    } = dto;
+
+    if (name !== undefined || email !== undefined) {
+      await this.userRepository.update(student.user.id, {
+        ...(name !== undefined ? { name } : {}),
+        ...(email !== undefined ? { email } : {}),
+      });
+    }
+
+    await this.studentRepository.update(id, {
+      ...(phone !== undefined ? { phone } : {}),
+      ...(address !== undefined ? { address } : {}),
+      ...(regionId !== undefined ? { region: { id: regionId } } : {}),
+      ...(active !== undefined ? { active } : {}),
+    });
+
+    if (
+      contractStatus !== undefined ||
+      planId !== undefined ||
+      discountPercentage !== undefined
+    ) {
+      const currentContract = this.pickCurrentContract(student.contracts);
+
+      if (!currentContract) {
+        throw new BadRequestException(
+          'Aluno não possui um contrato para editar',
+        );
+      }
+
+      if (contractStatus !== undefined) {
+        await this.studentContractsService.update(currentContract.id, {
+          status: contractStatus,
+        });
+      }
+
+      const normalizedDiscount =
+        discountPercentage !== undefined
+          ? normalizeDiscount(discountPercentage)
+          : undefined;
+
+      const planChanged =
+        planId !== undefined && planId !== currentContract.plan.id;
+      const discountChanged =
+        normalizedDiscount !== undefined &&
+        normalizedDiscount !== currentContract.discountPercentage;
+
+      if (planChanged || discountChanged) {
+        await this.studentContractsService.replace(currentContract.id, {
+          planId: planId ?? currentContract.plan.id,
+          discountPercentage:
+            normalizedDiscount !== undefined
+              ? normalizedDiscount
+              : currentContract.discountPercentage,
+        });
+      }
+    }
+
+    if (guardian !== undefined) {
+      const pickedGuardian = this.pickGuardian(student.guardians);
+
+      if (!pickedGuardian) {
+        throw new BadRequestException(
+          'Aluno não possui responsável cadastrado',
+        );
+      }
+
+      await this.guardiansService.update(pickedGuardian.id, guardian);
+    }
+
+    return await this.findById(id);
   }
 
   /*

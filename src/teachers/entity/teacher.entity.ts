@@ -28,6 +28,9 @@ export class TeacherEntity {
   @Column({ name: 'bio', type: 'text', nullable: true })
   bio: string | null;
 
+  @Column({ name: 'active', type: 'boolean', default: true })
+  active: boolean;
+
   @ManyToMany(() => SubjectEntity, (subject) => subject.teachers)
   @JoinTable({
     name: 'teacher_subjects',

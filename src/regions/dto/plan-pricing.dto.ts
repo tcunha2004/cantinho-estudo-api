@@ -2,6 +2,7 @@ import { Frequency } from '../../plans/enums/frequency.enum';
 import { PlanType } from '../../plans/enums/plan-type.enum';
 
 export class PlanPricingDto {
+  id: string;
   planType: PlanType;
   frequency: Frequency | null;
   monthlyPrice: string;

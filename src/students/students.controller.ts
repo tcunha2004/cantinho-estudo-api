@@ -1,9 +1,19 @@
-import { Controller, Get, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { StudentsService } from './students.service';
 import { ActiveStudentDto } from './dto/active-student.dto';
 import { StudentPlanDto } from './dto/student-plan.dto';
 import { PlanSummaryDto } from './dto/plan-summary.dto';
 import { PaymentHistoryDto } from './dto/payment-history.dto';
+import { StudentDetailDto } from './dto/student-detail.dto';
+import { UpdateStudentDto } from './dto/update-student.dto';
 import { AuthGuard } from 'src/auth/guard/auth.guard';
 import type { RequestWithUser } from 'src/auth/guard/auth.guard';
 import { RolesGuard } from 'src/auth/guard/roles.guard';
@@ -27,6 +37,23 @@ export class StudentsController {
   @Get('active')
   public async findAllActive(): Promise<ActiveStudentDto[]> {
     return await this.studentsService.findAllActive();
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
+  @Get(':id')
+  public async findById(@Param('id') id: string): Promise<StudentDetailDto> {
+    return await this.studentsService.findById(id);
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
+  @Patch(':id')
+  public async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateStudentDto,
+  ): Promise<StudentDetailDto> {
+    return await this.studentsService.update(id, dto);
   }
 
   @UseGuards(AuthGuard)

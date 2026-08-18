@@ -11,6 +11,7 @@ import { StudentContractsModule } from './student-contracts/student-contracts.mo
 import { GuardiansModule } from './guardians/guardians.module';
 import { TeachersModule } from './teachers/teachers.module';
 import { RegionsModule } from './regions/regions.module';
+import { SubjectsModule } from './subjects/subjects.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { RegionsModule } from './regions/regions.module';
     GuardiansModule,
     TeachersModule,
     RegionsModule,
+    SubjectsModule,
   ],
   providers: [
     {

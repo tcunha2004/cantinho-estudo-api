@@ -44,6 +44,7 @@ export class RegionsService {
             : (a.frequency ?? 0) - (b.frequency ?? 0);
         })
         .map((plan) => ({
+          id: plan.id,
           planType: plan.planType,
           frequency: plan.frequency,
           monthlyPrice: plan.monthlyPrice,

@@ -1,17 +1,93 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { TeacherEntity } from './entity/teacher.entity';
+import { UserEntity } from '../users/entity/user.entity';
+import { SubjectEntity } from '../subjects/entity/subject.entity';
 import { BILLABLE_STATUSES } from '../classes/enums/class-status.enum';
 import { getMonthRange } from '../utils/date-range.util';
 import { TeachersEarningsSummaryDto } from './dto/teachers-earnings-summary.dto';
+import { TeacherDetailDto } from './dto/teacher-detail.dto';
+import { UpdateTeacherDto } from './dto/update-teacher.dto';
 
 @Injectable()
 export class TeachersService {
   constructor(
     @InjectRepository(TeacherEntity)
     private readonly teacherRepository: Repository<TeacherEntity>,
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(SubjectEntity)
+    private readonly subjectRepository: Repository<SubjectEntity>,
   ) {}
+
+  /* Dados completos de um professor para o modal de visualização/edição do admin. */
+  public async findById(id: string): Promise<TeacherDetailDto> {
+    const teacher = await this.teacherRepository.findOne({
+      where: { id },
+      relations: { user: true, subjects: true },
+    });
+
+    if (!teacher) {
+      throw new NotFoundException('Professor não encontrado');
+    }
+
+    return {
+      id: teacher.id,
+      name: teacher.user.name,
+      email: teacher.user.email,
+      bio: teacher.bio,
+      active: teacher.active,
+      subjects: teacher.subjects.map((subject) => ({
+        id: subject.id,
+        name: subject.name,
+      })),
+    };
+  }
+
+  /*
+   * Edita os dados cadastrais do professor (nome/email vivem no usuário, o
+   * resto na própria tabela) e permite inativá-lo. Só altera o que veio no
+   * dto — `subjectIds`, quando enviado, substitui a lista de matérias.
+   */
+  public async update(
+    id: string,
+    dto: UpdateTeacherDto,
+  ): Promise<TeacherDetailDto> {
+    const teacher = await this.teacherRepository.findOne({
+      where: { id },
+      relations: { user: true },
+    });
+
+    if (!teacher) {
+      throw new NotFoundException('Professor não encontrado');
+    }
+
+    const { name, email, bio, subjectIds, active } = dto;
+
+    if (name !== undefined || email !== undefined) {
+      await this.userRepository.update(teacher.user.id, {
+        ...(name !== undefined ? { name } : {}),
+        ...(email !== undefined ? { email } : {}),
+      });
+    }
+
+    if (bio !== undefined || active !== undefined) {
+      await this.teacherRepository.update(id, {
+        ...(bio !== undefined ? { bio } : {}),
+        ...(active !== undefined ? { active } : {}),
+      });
+    }
+
+    if (subjectIds !== undefined) {
+      teacher.subjects = await this.subjectRepository.find({
+        where: { id: In(subjectIds) },
+      });
+      await this.teacherRepository.save(teacher);
+    }
+
+    return await this.findById(id);
+  }
 
   /*
    * Ganhos por professor num mês (month no formato YYYY-MM): para cada
@@ -29,6 +105,7 @@ export class TeachersService {
 
     const rows = await this.teacherRepository
       .createQueryBuilder('teacher')
+      .where('teacher.active = true')
       .leftJoin('teacher.user', 'user')
       .leftJoin(
         'teacher.classes',
