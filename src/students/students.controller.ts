@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Req,
   UseGuards,
@@ -42,7 +43,9 @@ export class StudentsController {
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin')
   @Get(':id')
-  public async findById(@Param('id') id: string): Promise<StudentDetailDto> {
+  public async findById(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<StudentDetailDto> {
     return await this.studentsService.findById(id);
   }
 
@@ -50,7 +53,7 @@ export class StudentsController {
   @Roles('admin')
   @Patch(':id')
   public async update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateStudentDto,
   ): Promise<StudentDetailDto> {
     return await this.studentsService.update(id, dto);

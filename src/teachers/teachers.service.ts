@@ -80,10 +80,15 @@ export class TeachersService {
     }
 
     if (subjectIds !== undefined) {
-      teacher.subjects = await this.subjectRepository.find({
+      const subjects = await this.subjectRepository.find({
         where: { id: In(subjectIds) },
       });
-      await this.teacherRepository.save(teacher);
+      /*
+       * Salva só o id e as matérias. Salvar a entidade carregada no início do
+       * método reescreveria as colunas com os valores de antes do update acima
+       * — bio e active voltariam ao que eram.
+       */
+      await this.teacherRepository.save({ id, subjects });
     }
 
     return await this.findById(id);

@@ -637,6 +637,19 @@ export class ClassesService {
       throw new BadRequestException('A aula já está agendada');
     }
 
+    /*
+     * Cancelar libera o horário, e outra aula pode ter ocupado o lugar desde
+     * então. Sem esta checagem, reabrir criaria duas aulas agendadas no mesmo
+     * horário — exatamente o que `create` e `update` impedem.
+     */
+    await this.assertNoConflicts({
+      teacherId: item.teacher.id,
+      studentId: item.studentContract.student.id,
+      scheduledAt: toNaiveTimestamp(toNaiveIso(item.scheduledAt)),
+      durationMinutes: item.durationMinutes,
+      exceptClassId: item.id,
+    });
+
     await this.classRepository.save({
       id: item.id,
       status: ClassStatus.SCHEDULED,

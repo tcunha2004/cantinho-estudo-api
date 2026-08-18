@@ -35,6 +35,22 @@ function money(value: number): string {
 }
 
 /*
+ * Ordem do histórico de contratos: do mais recente para o mais antigo. Empate
+ * na data de início decide pelo mais recém-criado — trocar de plano duas vezes
+ * no mesmo dia cria dois contratos com o mesmo `start_date`, e sem esse
+ * critério o "contrato atual" podia cair no que acabou de ser cancelado.
+ */
+function byMostRecent(
+  a: StudentContractEntity,
+  b: StudentContractEntity,
+): number {
+  return (
+    b.startDate.localeCompare(a.startDate) ||
+    b.createdAt.localeCompare(a.createdAt)
+  );
+}
+
+/*
  * Desconto como o banco guarda: decimal(5,2) em string. Normaliza antes de
  * comparar com o valor atual do contrato, senão "10" nunca bate com "10.00" e
  * cria um contrato novo à toa a cada salvamento.
@@ -123,18 +139,16 @@ export class StudentsService {
         cpf: guardian.cpf,
         isFinancialResponsible: guardian.isFinancialResponsible,
       })),
-      contracts: [...student.contracts]
-        .sort((a, b) => b.startDate.localeCompare(a.startDate))
-        .map((contract) => ({
-          id: contract.id,
-          planId: contract.plan.id,
-          planType: contract.plan.planType,
-          frequency: contract.plan.frequency,
-          status: contract.status,
-          startDate: contract.startDate,
-          endDate: contract.endDate,
-          discountPercentage: contract.discountPercentage,
-        })),
+      contracts: [...student.contracts].sort(byMostRecent).map((contract) => ({
+        id: contract.id,
+        planId: contract.plan.id,
+        planType: contract.plan.planType,
+        frequency: contract.plan.frequency,
+        status: contract.status,
+        startDate: contract.startDate,
+        endDate: contract.endDate,
+        discountPercentage: contract.discountPercentage,
+      })),
     };
   }
 
@@ -423,14 +437,10 @@ export class StudentsService {
     );
   }
 
-  /* Contrato mais recente do aluno (pela data de início). */
+  /* Contrato mais recente do aluno — ver byMostRecent. */
   private pickCurrentContract(
     contracts: StudentContractEntity[],
   ): StudentContractEntity | null {
-    return (
-      [...contracts].sort((a, b) =>
-        b.startDate.localeCompare(a.startDate),
-      )[0] ?? null
-    );
+    return [...contracts].sort(byMostRecent)[0] ?? null;
   }
 }
