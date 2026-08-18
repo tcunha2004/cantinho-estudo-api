@@ -1,8 +1,9 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { StudentContractsService } from './student-contracts.service';
 import { ContractStatus } from './enums/contract-status.enum';
 import { ClassStatus } from '../classes/enums/class-status.enum';
 import { PlanType } from '../plans/enums/plan-type.enum';
+import { PaymentStatus } from '../payments/enums/payment-status.enum';
 import { todayNaive } from '../utils/date-range.util';
 
 function fakeQueryBuilder(rows: unknown[]) {
@@ -32,13 +33,15 @@ function makeService() {
     createQueryBuilder: jest.fn(),
   };
   const classRepository = { update: jest.fn() };
+  const paymentRepository = { findOne: jest.fn() };
 
   const service = new StudentContractsService(
     contractRepository as never,
     classRepository as never,
+    paymentRepository as never,
   );
 
-  return { service, contractRepository, classRepository };
+  return { service, contractRepository, classRepository, paymentRepository };
 }
 
 describe('StudentContractsService', () => {
@@ -76,12 +79,32 @@ describe('StudentContractsService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('cria o substituto, migra as aulas agendadas e fecha o antigo nessa ordem', async () => {
-      const { service, contractRepository, classRepository } = makeService();
+    it('bloqueia a troca quando há parcela em aberto', async () => {
+      const { service, contractRepository, paymentRepository } = makeService();
       contractRepository.findOne.mockResolvedValue({
         id: 'c1',
         student: { id: 's1' },
       });
+      paymentRepository.findOne.mockResolvedValue({
+        id: 'pay1',
+        status: PaymentStatus.PENDING,
+      });
+
+      await expect(
+        service.replace('c1', { planId: 'p2', discountPercentage: null }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(contractRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('cria o substituto, migra as aulas agendadas e fecha o antigo nessa ordem', async () => {
+      const { service, contractRepository, classRepository, paymentRepository } =
+        makeService();
+      contractRepository.findOne.mockResolvedValue({
+        id: 'c1',
+        student: { id: 's1' },
+      });
+      paymentRepository.findOne.mockResolvedValue(null);
 
       const order: string[] = [];
       contractRepository.save.mockImplementation((data: object) => {

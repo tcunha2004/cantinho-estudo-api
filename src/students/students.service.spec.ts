@@ -299,6 +299,32 @@ describe('StudentsService', () => {
       });
     });
 
+    it('inativar cancela em cascata o contrato vigente', async () => {
+      const { service, studentRepository, studentContractsService } =
+        makeService();
+      studentRepository.findOne.mockResolvedValue(makeStudent());
+
+      await service.update('s1', { active: false });
+
+      expect(studentContractsService.update).toHaveBeenCalledWith('c1', {
+        status: ContractStatus.CANCELLED,
+      });
+    });
+
+    it('inativar não tenta cancelar contrato já cancelado ou aluno sem contrato', async () => {
+      const { service, studentRepository, studentContractsService } =
+        makeService();
+      studentRepository.findOne.mockResolvedValue(
+        makeStudent({
+          contracts: [makeContract({ status: ContractStatus.CANCELLED })],
+        }),
+      );
+
+      await service.update('s1', { active: false });
+
+      expect(studentContractsService.update).not.toHaveBeenCalled();
+    });
+
     it('muta o status do contrato atual sem versionar', async () => {
       const { service, studentRepository, studentContractsService } =
         makeService();

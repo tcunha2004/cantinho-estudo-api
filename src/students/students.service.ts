@@ -8,6 +8,7 @@ import { FindOptionsRelations, IsNull, Repository } from 'typeorm';
 import { StudentEntity } from './entity/student.entity';
 import { StudentContractEntity } from '../student-contracts/entity/student-contract.entity';
 import { StudentContractsService } from '../student-contracts/student-contracts.service';
+import { ContractStatus } from '../student-contracts/enums/contract-status.enum';
 import { GuardianEntity } from '../guardians/entity/guardian.entity';
 import { GuardiansService } from '../guardians/guardians.service';
 import { PlanEntity } from '../plans/entity/plan.entity';
@@ -156,7 +157,8 @@ export class StudentsService {
    * Edita os dados cadastrais do aluno (nome/email vivem no usuário, o resto
    * na própria tabela), o contrato atual (status muta; plano/desconto
    * versionam — ver StudentContractsService) e o responsável financeiro. Só
-   * altera o que veio no dto.
+   * altera o que veio no dto. Inativar (active: false) cancela em cascata o
+   * contrato vigente e, por tabela, as aulas ainda agendadas.
    */
   public async update(
     id: string,
@@ -197,6 +199,22 @@ export class StudentsService {
       ...(regionId !== undefined ? { region: { id: regionId } } : {}),
       ...(active !== undefined ? { active } : {}),
     });
+
+    /*
+     * Inativar não é só sair da lista de ativos: cancela o contrato vigente,
+     * que por cascata (StudentContractsService.update) cancela as aulas ainda
+     * agendadas. Sem isso, o contrato continuava ativo e as aulas podiam ser
+     * encerradas, gerando cobrança e comissão para um aluno inativo.
+     */
+    if (active === false) {
+      const activeContract = this.pickCurrentContract(student.contracts);
+
+      if (activeContract && activeContract.status === ContractStatus.ACTIVE) {
+        await this.studentContractsService.update(activeContract.id, {
+          status: ContractStatus.CANCELLED,
+        });
+      }
+    }
 
     if (
       contractStatus !== undefined ||

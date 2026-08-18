@@ -96,11 +96,12 @@ export class TeachersService {
 
   /*
    * Ganhos por professor num mês (month no formato YYYY-MM): para cada
-   * professor, conta as aulas com status completed cujo scheduled_at está
-   * dentro do mês e soma as comissões congeladas (commission_amount) dessas
-   * aulas. Professores sem aulas concluídas aparecem com 0. Cada professor
-   * traz também suas disciplinas e o valor por aula do mês. Também retorna os
-   * totais gerais (aulas e valor a pagar) somando todos os professores.
+   * professor, conta as aulas faturáveis (BILLABLE_STATUSES: realizadas e
+   * faltas) cujo scheduled_at está dentro do mês e soma as comissões
+   * congeladas (commission_amount) dessas aulas. Professores sem aulas
+   * faturáveis aparecem com 0. Cada professor traz também suas disciplinas e
+   * o valor por aula do mês. Também retorna os totais gerais (aulas e valor a
+   * pagar) somando todos os professores.
    */
   public async getAllTeachersEarningsByMonth(
     month: string,

@@ -1,12 +1,20 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { StudentContractEntity } from './entity/student-contract.entity';
 import { ContractStatus } from './enums/contract-status.enum';
 import { PlanType } from '../plans/enums/plan-type.enum';
 import { ClassEntity } from '../classes/entity/class.entity';
 import { ClassStatus } from '../classes/enums/class-status.enum';
+import { PaymentEntity } from '../payments/entity/payment.entity';
+import { PaymentStatus } from '../payments/enums/payment-status.enum';
 import { todayNaive } from '../utils/date-range.util';
+
+const OPEN_PAYMENT_STATUSES = [PaymentStatus.PENDING, PaymentStatus.OVERDUE];
 
 @Injectable()
 export class StudentContractsService {
@@ -15,6 +23,8 @@ export class StudentContractsService {
     private readonly contractRepository: Repository<StudentContractEntity>,
     @InjectRepository(ClassEntity)
     private readonly classRepository: Repository<ClassEntity>,
+    @InjectRepository(PaymentEntity)
+    private readonly paymentRepository: Repository<PaymentEntity>,
   ) {}
 
   /*
@@ -40,6 +50,11 @@ export class StudentContractsService {
   }
 
   /*
+   * Bloqueia com parcela em aberto (pending/overdue): a parcela fica amarrada
+   * ao contrato em que foi gerada, e as aulas agendadas migram para o
+   * contrato novo — a parcela antiga passaria a não achar nenhuma aula e
+   * mostraria R$ 0,00. Só libera depois que a parcela pendente for paga.
+   *
    * Troca de plano/desconto não muta o contrato — cria um substituto e fecha
    * o antigo. Mutar reescreveria retroativamente a cobrança de aulas já
    * encerradas (finalize() lê plano/desconto do contrato) e o histórico de
@@ -60,6 +75,19 @@ export class StudentContractsService {
 
     if (!old) {
       throw new NotFoundException('Contrato não encontrado');
+    }
+
+    const openPayment = await this.paymentRepository.findOne({
+      where: {
+        studentContract: { id: oldContractId },
+        status: In(OPEN_PAYMENT_STATUSES),
+      },
+    });
+
+    if (openPayment) {
+      throw new BadRequestException(
+        'Não é possível trocar de plano com parcela em aberto. Pague a parcela pendente antes de trocar.',
+      );
     }
 
     const created = this.contractRepository.create({
