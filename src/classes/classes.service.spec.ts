@@ -946,6 +946,20 @@ describe('ClassesService', () => {
   });
 
   describe('números do painel e dos ganhos', () => {
+    it('aulas do mês não contam as canceladas', async () => {
+      const { service, classRepository } = makeService();
+      classRepository.count.mockResolvedValue(7);
+
+      await expect(service.countCurrentMonth()).resolves.toBe(7);
+
+      const { status } = classRepository.count.mock.calls[0][0].where;
+      expect(status._value).toEqual([
+        ClassStatus.SCHEDULED,
+        ClassStatus.COMPLETED,
+        ClassStatus.NO_SHOW,
+      ]);
+    });
+
     it('receita do mês soma as mensalidades do mês com as aulas avulsas', async () => {
       const { service, classRepository, paymentRepository } = makeService();
       paymentRepository.createQueryBuilder.mockReturnValue(

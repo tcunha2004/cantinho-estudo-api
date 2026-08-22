@@ -92,11 +92,15 @@ export class ClassesService {
     private readonly regionRepository: Repository<RegionEntity>,
   ) {}
 
+  /* Aula cancelada não aconteceu nem vai acontecer: fora da contagem. */
   public async countCurrentMonth(): Promise<number> {
     const { start, end } = getCurrentMonthRange();
 
     return await this.classRepository.count({
-      where: { scheduledAt: Between(start, end) },
+      where: {
+        status: In(BLOCKING_STATUSES),
+        scheduledAt: Between(start, end),
+      },
     });
   }
 
