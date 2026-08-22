@@ -15,6 +15,7 @@ import { PlanSummaryDto } from './dto/plan-summary.dto';
 import { PaymentHistoryDto } from './dto/payment-history.dto';
 import { StudentDetailDto } from './dto/student-detail.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
+import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { AuthGuard } from 'src/auth/guard/auth.guard';
 import type { RequestWithUser } from 'src/auth/guard/auth.guard';
 import { RolesGuard } from 'src/auth/guard/roles.guard';
@@ -102,5 +103,17 @@ export class StudentsController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<PaymentHistoryDto[]> {
     return await this.studentsService.findPaymentsByStudent(id);
+  }
+
+  /* Fecha (ou reabre) uma parcela do aluno. */
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
+  @Patch(':id/payments/:paymentId')
+  public async updatePayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('paymentId', ParseUUIDPipe) paymentId: string,
+    @Body() dto: UpdatePaymentDto,
+  ): Promise<PaymentHistoryDto> {
+    return await this.studentsService.updatePayment(id, paymentId, dto);
   }
 }

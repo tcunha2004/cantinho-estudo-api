@@ -54,18 +54,129 @@ describe('StudentContractsService', () => {
       expect(classRepository.update).not.toHaveBeenCalled();
     });
 
-    it('cancelar cancela em cascata só as aulas ainda agendadas', async () => {
+    it('cancelar cancela em cascata as aulas agendadas e descarta troca de plano agendada', async () => {
       const { service, contractRepository, classRepository } = makeService();
 
       await service.update('c1', { status: ContractStatus.CANCELLED });
 
       expect(contractRepository.update).toHaveBeenCalledWith('c1', {
         status: ContractStatus.CANCELLED,
+        pendingPlan: null,
+        pendingDiscountPercentage: null,
       });
       expect(classRepository.update).toHaveBeenCalledWith(
         { studentContract: { id: 'c1' }, status: ClassStatus.SCHEDULED },
         { status: ClassStatus.CANCELLED },
       );
+    });
+  });
+
+  describe('hasOpenPayment', () => {
+    it('true quando existe parcela pending', async () => {
+      const { service, paymentRepository } = makeService();
+      paymentRepository.findOne.mockResolvedValue({ id: 'pay1' });
+
+      await expect(service.hasOpenPayment('c1')).resolves.toBe(true);
+      expect(paymentRepository.findOne).toHaveBeenCalledWith({
+        where: {
+          studentContract: { id: 'c1' },
+          status: PaymentStatus.PENDING,
+        },
+      });
+    });
+
+    it('false quando não há parcela pending', async () => {
+      const { service, paymentRepository } = makeService();
+      paymentRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.hasOpenPayment('c1')).resolves.toBe(false);
+    });
+  });
+
+  describe('schedulePlanChange / clearPendingPlanChange', () => {
+    it('grava o plano e desconto pendentes', async () => {
+      const { service, contractRepository } = makeService();
+
+      await service.schedulePlanChange('c1', {
+        planId: 'p2',
+        discountPercentage: '15.00',
+      });
+
+      expect(contractRepository.update).toHaveBeenCalledWith('c1', {
+        pendingPlan: { id: 'p2' },
+        pendingDiscountPercentage: '15.00',
+      });
+    });
+
+    it('limpa o pendente', async () => {
+      const { service, contractRepository } = makeService();
+
+      await service.clearPendingPlanChange('c1');
+
+      expect(contractRepository.update).toHaveBeenCalledWith('c1', {
+        pendingPlan: null,
+        pendingDiscountPercentage: null,
+      });
+    });
+  });
+
+  describe('applyPendingPlanChange', () => {
+    it('devolve null quando o contrato não existe ou não tem troca pendente', async () => {
+      const { service, contractRepository } = makeService();
+      contractRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.applyPendingPlanChange('c1')).resolves.toBeNull();
+
+      contractRepository.findOne.mockResolvedValue({
+        id: 'c1',
+        student: { id: 's1' },
+        pendingPlan: null,
+      });
+
+      await expect(service.applyPendingPlanChange('c1')).resolves.toBeNull();
+      expect(contractRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('efetiva a troca sem passar pelo guard de parcela em aberto', async () => {
+      const {
+        service,
+        contractRepository,
+        classRepository,
+        paymentRepository,
+      } = makeService();
+      contractRepository.findOne.mockResolvedValue({
+        id: 'c1',
+        student: { id: 's1' },
+        pendingPlan: { id: 'p2' },
+        pendingDiscountPercentage: '15.00',
+      });
+      /* Mesmo que ainda exista parcela pending (ela só será marcada como paga
+       * depois que este método rodar), a troca não deve ser bloqueada. */
+      paymentRepository.findOne.mockResolvedValue({
+        id: 'pay1',
+        status: PaymentStatus.PENDING,
+      });
+
+      const created = await service.applyPendingPlanChange('c1');
+
+      expect(created?.id).toBe('novo-contrato');
+      expect(contractRepository.create).toHaveBeenCalledWith({
+        student: { id: 's1' },
+        plan: { id: 'p2' },
+        discountPercentage: '15.00',
+        startDate: todayNaive(),
+        status: ContractStatus.ACTIVE,
+      });
+      expect(classRepository.update).toHaveBeenCalledWith(
+        { studentContract: { id: 'c1' }, status: ClassStatus.SCHEDULED },
+        { studentContract: { id: 'novo-contrato' } },
+      );
+      expect(contractRepository.update).toHaveBeenCalledWith('c1', {
+        status: ContractStatus.CANCELLED,
+        endDate: todayNaive(),
+        pendingPlan: null,
+        pendingDiscountPercentage: null,
+      });
     });
   });
 
@@ -98,8 +209,12 @@ describe('StudentContractsService', () => {
     });
 
     it('cria o substituto, migra as aulas agendadas e fecha o antigo nessa ordem', async () => {
-      const { service, contractRepository, classRepository, paymentRepository } =
-        makeService();
+      const {
+        service,
+        contractRepository,
+        classRepository,
+        paymentRepository,
+      } = makeService();
       contractRepository.findOne.mockResolvedValue({
         id: 'c1',
         student: { id: 's1' },
@@ -143,6 +258,8 @@ describe('StudentContractsService', () => {
       expect(contractRepository.update).toHaveBeenCalledWith('c1', {
         status: ContractStatus.CANCELLED,
         endDate: todayNaive(),
+        pendingPlan: null,
+        pendingDiscountPercentage: null,
       });
     });
   });

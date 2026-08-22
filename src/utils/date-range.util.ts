@@ -120,6 +120,19 @@ export function getNaiveDayRange(from: string, to: string): DateRange {
 }
 
 /*
+ * Soma meses a uma data ingênua (YYYY-MM-DD), preservando o dia; quando o dia
+ * não existe no mês de destino, cai no último dia dele (31/01 → 28/02).
+ */
+export function addMonthsToDate(value: string, months: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  const daysInTargetMonth = new Date(year, month - 1 + months + 1, 0).getDate();
+
+  return toDateOnly(
+    new Date(year, month - 1 + months, Math.min(day, daysInTargetMonth)),
+  );
+}
+
+/*
  * Garante que colunas `timestamp` cheguem à aplicação como string ingênua,
  * e não como Date, que o JSON.stringify converteria para UTC com `Z`.
  */

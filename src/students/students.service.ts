@@ -13,16 +13,22 @@ import { GuardianEntity } from '../guardians/entity/guardian.entity';
 import { GuardiansService } from '../guardians/guardians.service';
 import { PlanEntity } from '../plans/entity/plan.entity';
 import { PaymentEntity } from '../payments/entity/payment.entity';
+import { PaymentStatus } from '../payments/enums/payment-status.enum';
 import { ClassEntity } from '../classes/entity/class.entity';
 import { UserEntity } from '../users/entity/user.entity';
 import { BILLABLE_STATUSES } from '../classes/enums/class-status.enum';
-import { getMonthRange } from '../utils/date-range.util';
+import {
+  addMonthsToDate,
+  getMonthRange,
+  nowNaive,
+} from '../utils/date-range.util';
 import { CompactStudentDto, StudentStatus } from './dto/compact-student.dto';
 import { StudentPlanDto } from './dto/student-plan.dto';
 import { PlanSummaryDto } from './dto/plan-summary.dto';
 import { PaymentHistoryDto } from './dto/payment-history.dto';
 import { StudentDetailDto } from './dto/student-detail.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
+import { UpdatePaymentDto } from './dto/update-payment.dto';
 
 /*
  * Aula no Cantinho sempre usa a tabela desta região, não a do bairro do aluno
@@ -126,7 +132,7 @@ export class StudentsService {
         user: true,
         region: true,
         guardians: true,
-        contracts: { plan: true },
+        contracts: { plan: true, pendingPlan: true },
       },
     });
 
@@ -157,6 +163,9 @@ export class StudentsService {
         startDate: contract.startDate,
         endDate: contract.endDate,
         discountPercentage: contract.discountPercentage,
+        pendingPlanId: contract.pendingPlan?.id ?? null,
+        pendingPlanType: contract.pendingPlan?.planType ?? null,
+        pendingDiscountPercentage: contract.pendingDiscountPercentage,
       })),
     };
   }
@@ -174,7 +183,11 @@ export class StudentsService {
   ): Promise<StudentDetailDto> {
     const student = await this.studentRepository.findOne({
       where: { id },
-      relations: { user: true, guardians: true, contracts: { plan: true } },
+      relations: {
+        user: true,
+        guardians: true,
+        contracts: { plan: true, pendingPlan: true },
+      },
     });
 
     if (!student) {
@@ -255,13 +268,40 @@ export class StudentsService {
         normalizedDiscount !== currentContract.discountPercentage;
 
       if (planChanged || discountChanged) {
-        await this.studentContractsService.replace(currentContract.id, {
+        const targetPlan = {
           planId: planId ?? currentContract.plan.id,
           discountPercentage:
             normalizedDiscount !== undefined
               ? normalizedDiscount
               : currentContract.discountPercentage,
-        });
+        };
+
+        /*
+         * Com parcela em aberto, replace() recusaria a troca — em vez de
+         * propagar o 400, a troca fica agendada e só se efetiva quando essa
+         * parcela for paga (StudentsService.updatePayment()).
+         */
+        if (
+          await this.studentContractsService.hasOpenPayment(currentContract.id)
+        ) {
+          await this.studentContractsService.schedulePlanChange(
+            currentContract.id,
+            targetPlan,
+          );
+        } else {
+          await this.studentContractsService.replace(
+            currentContract.id,
+            targetPlan,
+          );
+        }
+      } else if (currentContract.pendingPlan) {
+        /*
+         * Plano/desconto enviados batem com o que já está no contrato: o
+         * admin desistiu da troca agendada e voltou pro valor atual.
+         */
+        await this.studentContractsService.clearPendingPlanChange(
+          currentContract.id,
+        );
       }
     }
 
@@ -400,24 +440,116 @@ export class StudentsService {
     });
 
     return await Promise.all(
-      payments.map(async (payment) => {
-        const { amount, classesCount } = await this.sumBillableClasses(
-          payment.studentContract.id,
-          payment.dueDate,
-        );
+      payments.map((payment) => this.toPaymentDto(payment)),
+    );
+  }
 
-        return {
-          id: payment.id,
-          contractId: payment.studentContract.id,
-          amount,
-          dueDate: payment.dueDate,
-          paidAt: payment.paidAt,
-          status: payment.status,
-          planType: payment.studentContract.plan.planType,
-          classesCount,
-        };
+  /*
+   * Troca o status de uma parcela — é como o admin fecha uma parcela depois que
+   * o aluno paga. `paidAt` acompanha o status (pago = agora, qualquer outro =
+   * nulo) em vez de vir do corpo: não existe registro retroativo hoje.
+   * O `studentId` entra no filtro de propósito: sem ele, um paymentId solto
+   * deixaria mexer na parcela de outro aluno.
+   *
+   * Quando a parcela PASSA a ser paga (não quando já estava): se o contrato
+   * tinha uma troca de plano agendada, ela é efetivada agora — é exatamente
+   * essa parcela que travava o replace(). Depois, gera a parcela do mês
+   * seguinte (no contrato novo, se houve troca; no mesmo, se não houve).
+   */
+  public async updatePayment(
+    studentId: string,
+    paymentId: string,
+    dto: UpdatePaymentDto,
+  ): Promise<PaymentHistoryDto> {
+    const payment = await this.paymentRepository.findOne({
+      where: { id: paymentId, studentContract: { student: { id: studentId } } },
+      relations: { studentContract: { plan: true, pendingPlan: true } },
+    });
+
+    if (!payment) {
+      throw new NotFoundException('Parcela não encontrada para este aluno');
+    }
+
+    const isNewlyPaid =
+      dto.status === PaymentStatus.PAID &&
+      payment.status !== PaymentStatus.PAID;
+
+    payment.status = dto.status;
+    payment.paidAt = dto.status === PaymentStatus.PAID ? nowNaive() : null;
+
+    const saved = await this.paymentRepository.save(payment);
+
+    if (isNewlyPaid) {
+      const appliedContract = payment.studentContract.pendingPlan
+        ? await this.studentContractsService.applyPendingPlanChange(
+            payment.studentContract.id,
+          )
+        : null;
+
+      await this.createNextPayment(
+        appliedContract ?? payment.studentContract,
+        payment.dueDate,
+      );
+    }
+
+    return await this.toPaymentDto(saved);
+  }
+
+  /*
+   * Parcela do mês seguinte, no dia equivalente ao vencimento pago (ver
+   * addMonthsToDate). Sem valor a apurar ainda — mesma convenção dos seeds: o
+   * valor exibido vem das aulas do mês, a coluna `amount` nasce zerada. Não
+   * cria em contrato já cancelado, nem duplica um vencimento que já exista
+   * (a geração mensal recorrente pode ter criado essa parcela antes).
+   */
+  private async createNextPayment(
+    contract: StudentContractEntity,
+    paidDueDate: string,
+  ): Promise<void> {
+    if (contract.status === ContractStatus.CANCELLED) {
+      return;
+    }
+
+    const nextDueDate = addMonthsToDate(paidDueDate, 1);
+
+    const existing = await this.paymentRepository.findOne({
+      where: { studentContract: { id: contract.id }, dueDate: nextDueDate },
+    });
+
+    if (existing) {
+      return;
+    }
+
+    await this.paymentRepository.save(
+      this.paymentRepository.create({
+        studentContract: contract,
+        amount: money(0),
+        dueDate: nextDueDate,
+        paidAt: null,
+        status: PaymentStatus.PENDING,
       }),
     );
+  }
+
+  /* Precisa de `studentContract.plan` carregado. */
+  private async toPaymentDto(
+    payment: PaymentEntity,
+  ): Promise<PaymentHistoryDto> {
+    const { amount, classesCount } = await this.sumBillableClasses(
+      payment.studentContract.id,
+      payment.dueDate,
+    );
+
+    return {
+      id: payment.id,
+      contractId: payment.studentContract.id,
+      amount,
+      dueDate: payment.dueDate,
+      paidAt: payment.paidAt,
+      status: payment.status,
+      planType: payment.studentContract.plan.planType,
+      classesCount,
+    };
   }
 
   /*

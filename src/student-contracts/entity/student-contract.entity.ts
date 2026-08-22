@@ -55,6 +55,26 @@ export class StudentContractEntity {
   })
   status: ContractStatus;
 
+  /*
+   * Troca de plano agendada: preenchido quando o admin tenta trocar de plano
+   * com parcela em aberto. Aplicada em StudentsService.updatePayment() quando
+   * essa parcela é marcada como paga — ver StudentContractsService. O
+   * contrato continua ACTIVE enquanto isso: aulas e cobrança seguem no plano
+   * atual normalmente.
+   */
+  @ManyToOne(() => PlanEntity, { nullable: true })
+  @JoinColumn({ name: 'pending_plan_id' })
+  pendingPlan: PlanEntity | null;
+
+  @Column({
+    name: 'pending_discount_percentage',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
+  pendingDiscountPercentage: string | null;
+
   @OneToMany(() => ClassEntity, (cls) => cls.studentContract)
   classes: ClassEntity[];
 

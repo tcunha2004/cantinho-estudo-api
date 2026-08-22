@@ -3,6 +3,7 @@ import { StudentsService } from './students.service';
 import { ContractStatus } from '../student-contracts/enums/contract-status.enum';
 import { PlanType } from '../plans/enums/plan-type.enum';
 import { Frequency } from '../plans/enums/frequency.enum';
+import { PaymentStatus } from '../payments/enums/payment-status.enum';
 
 /*
  * Repositórios mockados: o que se testa aqui é a regra, não o SQL. O que o
@@ -38,10 +39,22 @@ function makeService(overrides: Record<string, unknown> = {}) {
     update: jest.fn(),
   };
   const planRepository = { find: jest.fn(), findOne: jest.fn() };
-  const paymentRepository = { find: jest.fn() };
+  const paymentRepository = {
+    find: jest.fn(),
+    findOne: jest.fn(),
+    save: jest.fn(),
+    create: jest.fn((data: unknown) => data),
+  };
   const classRepository = { createQueryBuilder: jest.fn() };
   const userRepository = { update: jest.fn() };
-  const studentContractsService = { update: jest.fn(), replace: jest.fn() };
+  const studentContractsService = {
+    update: jest.fn(),
+    replace: jest.fn(),
+    hasOpenPayment: jest.fn().mockResolvedValue(false),
+    schedulePlanChange: jest.fn(),
+    clearPendingPlanChange: jest.fn(),
+    applyPendingPlanChange: jest.fn().mockResolvedValue(null),
+  };
   const guardiansService = { update: jest.fn() };
 
   const service = new StudentsService(
@@ -392,6 +405,63 @@ describe('StudentsService', () => {
       });
     });
 
+    it('agenda a troca em vez de trocar na hora quando há parcela em aberto', async () => {
+      const { service, studentRepository, studentContractsService } =
+        makeService();
+      studentRepository.findOne.mockResolvedValue(makeStudent());
+      studentContractsService.hasOpenPayment.mockResolvedValue(true);
+
+      await service.update('s1', { planId: 'p2' });
+
+      expect(studentContractsService.schedulePlanChange).toHaveBeenCalledWith(
+        'c1',
+        { planId: 'p2', discountPercentage: null },
+      );
+      expect(studentContractsService.replace).not.toHaveBeenCalled();
+    });
+
+    it('voltar pro plano/desconto atual descarta a troca agendada', async () => {
+      const { service, studentRepository, studentContractsService } =
+        makeService();
+      studentRepository.findOne.mockResolvedValue(
+        makeStudent({
+          contracts: [
+            makeContract({
+              pendingPlan: { id: 'p2', planType: PlanType.PRATA },
+            }),
+          ],
+        }),
+      );
+
+      await service.update('s1', { planId: 'p1' });
+
+      expect(
+        studentContractsService.clearPendingPlanChange,
+      ).toHaveBeenCalledWith('c1');
+      expect(studentContractsService.schedulePlanChange).not.toHaveBeenCalled();
+      expect(studentContractsService.replace).not.toHaveBeenCalled();
+    });
+
+    it('não descarta a troca agendada quando o admin não toca em plano/desconto', async () => {
+      const { service, studentRepository, studentContractsService } =
+        makeService();
+      studentRepository.findOne.mockResolvedValue(
+        makeStudent({
+          contracts: [
+            makeContract({
+              pendingPlan: { id: 'p2', planType: PlanType.PRATA },
+            }),
+          ],
+        }),
+      );
+
+      await service.update('s1', { phone: '31900000000' });
+
+      expect(
+        studentContractsService.clearPendingPlanChange,
+      ).not.toHaveBeenCalled();
+    });
+
     it('lança 400 ao editar contrato de aluno sem contrato', async () => {
       const { service, studentRepository } = makeService();
       studentRepository.findOne.mockResolvedValue(
@@ -447,7 +517,9 @@ describe('StudentsService', () => {
           ],
         }),
       );
-      planRepository.findOne.mockResolvedValue(makePlan({ hourPrice: '60.00' }));
+      planRepository.findOne.mockResolvedValue(
+        makePlan({ hourPrice: '60.00' }),
+      );
 
       const plan = await service.findStudentPlan('u1');
 
@@ -612,6 +684,239 @@ describe('StudentsService', () => {
       await expect(service.findPaymentHistory('u1')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('updatePayment', () => {
+    function makePayment(over: Partial<Record<string, unknown>> = {}) {
+      return {
+        id: 'pay1',
+        amount: '999.00',
+        dueDate: '2026-08-10',
+        paidAt: null as string | null,
+        status: PaymentStatus.PENDING,
+        studentContract: {
+          id: 'c1',
+          status: ContractStatus.ACTIVE,
+          plan: makePlan(),
+          pendingPlan: null,
+        },
+        ...over,
+      };
+    }
+
+    /* findOne serve pra duas coisas em updatePayment: achar a parcela pelo id
+     * (loadedPayment) e, dentro de createNextPayment, checar se já existe
+     * parcela no vencimento seguinte (null = não existe, deixa criar). */
+    function mockFindOne(
+      paymentRepository: { findOne: jest.Mock },
+      payment: ReturnType<typeof makePayment>,
+      existingNext: unknown = null,
+    ): void {
+      paymentRepository.findOne.mockImplementation(
+        (query: { where: { id?: string } }) =>
+          Promise.resolve(
+            query.where.id === payment.id ? payment : existingNext,
+          ),
+      );
+    }
+
+    it('marca como paga e carimba o paidAt', async () => {
+      const { service, paymentRepository, classRepository } = makeService();
+      const payment = makePayment();
+      mockFindOne(paymentRepository, payment);
+      paymentRepository.save.mockImplementation((saved: unknown) => saved);
+      classRepository.createQueryBuilder.mockReturnValue(
+        fakeQueryBuilder({ amount: '540', classesCount: '9' }),
+      );
+
+      const result = await service.updatePayment('s1', 'pay1', {
+        status: PaymentStatus.PAID,
+      });
+
+      expect(result.status).toBe(PaymentStatus.PAID);
+      expect(result.paidAt).not.toBeNull();
+      /* O valor continua vindo das aulas, não de payments.amount. */
+      expect(result.amount).toBe('540.00');
+    });
+
+    it('reabrir a parcela limpa o paidAt', async () => {
+      const { service, paymentRepository, classRepository } = makeService();
+      const payment = makePayment({
+        status: PaymentStatus.PAID,
+        paidAt: '2026-08-10 09:00:00',
+      });
+      mockFindOne(paymentRepository, payment);
+      paymentRepository.save.mockImplementation((saved: unknown) => saved);
+      classRepository.createQueryBuilder.mockReturnValue(
+        fakeQueryBuilder({ amount: '540', classesCount: '9' }),
+      );
+
+      const result = await service.updatePayment('s1', 'pay1', {
+        status: PaymentStatus.PENDING,
+      });
+
+      expect(result.paidAt).toBeNull();
+      /* Reabrir não é "passar a ser paga" — não gera parcela nova. */
+      expect(paymentRepository.save).toHaveBeenCalledTimes(1);
+    });
+
+    it('filtra pelo aluno: parcela de outro aluno é 404', async () => {
+      const { service, paymentRepository } = makeService();
+      paymentRepository.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.updatePayment('s1', 'pay1', { status: PaymentStatus.PAID }),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(paymentRepository.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: 'pay1',
+            studentContract: { student: { id: 's1' } },
+          },
+        }),
+      );
+    });
+
+    describe('parcela do mês seguinte', () => {
+      it('cria ao passar a ser paga: mesmo dia, mês seguinte, zerada e pendente', async () => {
+        const { service, paymentRepository, classRepository } = makeService();
+        const payment = makePayment();
+        mockFindOne(paymentRepository, payment);
+        paymentRepository.save.mockImplementation((saved: unknown) => saved);
+        classRepository.createQueryBuilder.mockReturnValue(
+          fakeQueryBuilder({ amount: '540', classesCount: '9' }),
+        );
+
+        await service.updatePayment('s1', 'pay1', {
+          status: PaymentStatus.PAID,
+        });
+
+        expect(paymentRepository.create).toHaveBeenCalledWith({
+          studentContract: payment.studentContract,
+          amount: '0.00',
+          dueDate: '2026-09-10',
+          paidAt: null,
+          status: PaymentStatus.PENDING,
+        });
+        expect(paymentRepository.save).toHaveBeenCalledTimes(2);
+      });
+
+      it('preserva o dia ou cai no último dia do mês seguinte (31/01 → 28/02)', async () => {
+        const { service, paymentRepository, classRepository } = makeService();
+        const payment = makePayment({ dueDate: '2026-01-31' });
+        mockFindOne(paymentRepository, payment);
+        paymentRepository.save.mockImplementation((saved: unknown) => saved);
+        classRepository.createQueryBuilder.mockReturnValue(
+          fakeQueryBuilder({ amount: '0', classesCount: '0' }),
+        );
+
+        await service.updatePayment('s1', 'pay1', {
+          status: PaymentStatus.PAID,
+        });
+
+        expect(paymentRepository.create).toHaveBeenCalledWith(
+          expect.objectContaining({ dueDate: '2026-02-28' }),
+        );
+      });
+
+      it('não gera parcela quando não é uma transição (já estava paga)', async () => {
+        const { service, paymentRepository, classRepository } = makeService();
+        const payment = makePayment({ status: PaymentStatus.PAID });
+        mockFindOne(paymentRepository, payment);
+        paymentRepository.save.mockImplementation((saved: unknown) => saved);
+        classRepository.createQueryBuilder.mockReturnValue(
+          fakeQueryBuilder({ amount: '0', classesCount: '0' }),
+        );
+
+        await service.updatePayment('s1', 'pay1', {
+          status: PaymentStatus.PAID,
+        });
+
+        expect(paymentRepository.create).not.toHaveBeenCalled();
+        expect(paymentRepository.save).toHaveBeenCalledTimes(1);
+      });
+
+      it('não gera parcela quando o contrato está cancelado', async () => {
+        const { service, paymentRepository, classRepository } = makeService();
+        const payment = makePayment({
+          studentContract: {
+            id: 'c1',
+            status: ContractStatus.CANCELLED,
+            plan: makePlan(),
+            pendingPlan: null,
+          },
+        });
+        mockFindOne(paymentRepository, payment);
+        paymentRepository.save.mockImplementation((saved: unknown) => saved);
+        classRepository.createQueryBuilder.mockReturnValue(
+          fakeQueryBuilder({ amount: '0', classesCount: '0' }),
+        );
+
+        await service.updatePayment('s1', 'pay1', {
+          status: PaymentStatus.PAID,
+        });
+
+        expect(paymentRepository.create).not.toHaveBeenCalled();
+      });
+
+      it('não duplica quando já existe parcela com aquele vencimento', async () => {
+        const { service, paymentRepository, classRepository } = makeService();
+        const payment = makePayment();
+        mockFindOne(paymentRepository, payment, { id: 'ja-existe' });
+        paymentRepository.save.mockImplementation((saved: unknown) => saved);
+        classRepository.createQueryBuilder.mockReturnValue(
+          fakeQueryBuilder({ amount: '0', classesCount: '0' }),
+        );
+
+        await service.updatePayment('s1', 'pay1', {
+          status: PaymentStatus.PAID,
+        });
+
+        expect(paymentRepository.create).not.toHaveBeenCalled();
+      });
+
+      it('efetiva a troca de plano pendente antes de criar a parcela, já no contrato novo', async () => {
+        const {
+          service,
+          paymentRepository,
+          classRepository,
+          studentContractsService,
+        } = makeService();
+        const payment = makePayment({
+          studentContract: {
+            id: 'c1',
+            status: ContractStatus.ACTIVE,
+            plan: makePlan(),
+            pendingPlan: { id: 'p2' },
+          },
+        });
+        mockFindOne(paymentRepository, payment);
+        paymentRepository.save.mockImplementation((saved: unknown) => saved);
+        classRepository.createQueryBuilder.mockReturnValue(
+          fakeQueryBuilder({ amount: '0', classesCount: '0' }),
+        );
+        const newContract = {
+          id: 'c2',
+          status: ContractStatus.ACTIVE,
+          plan: makePlan({ id: 'p2', planType: PlanType.PRATA }),
+        };
+        studentContractsService.applyPendingPlanChange.mockResolvedValue(
+          newContract,
+        );
+
+        await service.updatePayment('s1', 'pay1', {
+          status: PaymentStatus.PAID,
+        });
+
+        expect(
+          studentContractsService.applyPendingPlanChange,
+        ).toHaveBeenCalledWith('c1');
+        expect(paymentRepository.create).toHaveBeenCalledWith(
+          expect.objectContaining({ studentContract: newContract }),
+        );
+      });
     });
   });
 });

@@ -27,5 +27,10 @@ export class StudentDetailDto {
     startDate: string;
     endDate: string | null;
     discountPercentage: string | null;
+    /* Troca de plano agendada — não nula enquanto o contrato espera a parcela
+     * em aberto ser paga para efetivar a troca (StudentContractsService). */
+    pendingPlanId: string | null;
+    pendingPlanType: PlanType | null;
+    pendingDiscountPercentage: string | null;
   }[];
 }
