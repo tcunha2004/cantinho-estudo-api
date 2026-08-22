@@ -24,7 +24,6 @@ import {
   addMinutesToNaive,
   getCurrentDayRange,
   getCurrentMonthRange,
-  getCurrentWeekRange,
   getMonthRange,
   getNaiveDayRange,
   nowNaive,
@@ -93,8 +92,8 @@ export class ClassesService {
     private readonly regionRepository: Repository<RegionEntity>,
   ) {}
 
-  public async countCurrentWeek(): Promise<number> {
-    const { start, end } = getCurrentWeekRange();
+  public async countCurrentMonth(): Promise<number> {
+    const { start, end } = getCurrentMonthRange();
 
     return await this.classRepository.count({
       where: { scheduledAt: Between(start, end) },

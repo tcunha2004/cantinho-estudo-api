@@ -98,9 +98,9 @@ export class ClassesController {
 
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin')
-  @Get('current-week/count')
-  public async countCurrentWeek(): Promise<{ count: number }> {
-    const count = await this.classesService.countCurrentWeek();
+  @Get('current-month/count')
+  public async countCurrentMonth(): Promise<{ count: number }> {
+    const count = await this.classesService.countCurrentMonth();
     return { count };
   }
 

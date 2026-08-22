@@ -21,6 +21,10 @@ export class TeachersService {
     private readonly subjectRepository: Repository<SubjectEntity>,
   ) {}
 
+  public async countActive(): Promise<number> {
+    return await this.teacherRepository.count({ where: { active: true } });
+  }
+
   /* Dados completos de um professor para o modal de visualização/edição do admin. */
   public async findById(id: string): Promise<TeacherDetailDto> {
     const teacher = await this.teacherRepository.findOne({

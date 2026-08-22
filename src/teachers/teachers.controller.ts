@@ -35,6 +35,14 @@ export class TeachersController {
 
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin')
+  @Get('active/count')
+  public async countActive(): Promise<{ count: number }> {
+    const count = await this.teachersService.countActive();
+    return { count };
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
   @Get(':id')
   public async findById(
     @Param('id', ParseUUIDPipe) id: string,

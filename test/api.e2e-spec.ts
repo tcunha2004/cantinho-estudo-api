@@ -96,7 +96,10 @@ describe('API (e2e)', () => {
     ).body as { id: string; scheduledAt: string; status: string }[];
 
     for (const item of agenda) {
-      if (item.scheduledAt !== `${scheduledAt}:00` || item.status === 'cancelled') {
+      if (
+        item.scheduledAt !== `${scheduledAt}:00` ||
+        item.status === 'cancelled'
+      ) {
         continue;
       }
       if (item.status !== ClassStatus.SCHEDULED) {
@@ -232,8 +235,9 @@ describe('API (e2e)', () => {
       '/students/active',
       '/students/active/count',
       '/classes/today/upcoming',
-      '/classes/current-week/count',
+      '/classes/current-month/count',
       '/classes/current-month/revenue',
+      '/teachers/active/count',
       '/regions/pricing',
       '/subjects',
     ];
@@ -339,8 +343,14 @@ describe('API (e2e)', () => {
         request(server).get('/students/me/other-plans').set(auth(alunoToken)),
       ]);
 
-      const current = plan.body as { planType: string; frequency: number | null };
-      const list = others.body as { planType: string; frequency: number | null }[];
+      const current = plan.body as {
+        planType: string;
+        frequency: number | null;
+      };
+      const list = others.body as {
+        planType: string;
+        frequency: number | null;
+      }[];
 
       expect(
         list.some(
@@ -536,9 +546,9 @@ describe('API (e2e)', () => {
         .send({ subjectIds: [outra!.id] })
         .expect(200);
 
-      expect((response.body as { subjects: { id: string }[] }).subjects).toEqual(
-        [{ id: outra!.id, name: outra!.name }],
-      );
+      expect(
+        (response.body as { subjects: { id: string }[] }).subjects,
+      ).toEqual([{ id: outra!.id, name: outra!.name }]);
 
       await request(server)
         .patch(`/teachers/${teacherId}`)
@@ -660,9 +670,9 @@ describe('API (e2e)', () => {
 
   describe('GET /classes — painel e agenda', () => {
     it('painel do admin devolve números, não texto', async () => {
-      const [week, revenue] = await Promise.all([
+      const [classes, revenue] = await Promise.all([
         request(server)
-          .get('/classes/current-week/count')
+          .get('/classes/current-month/count')
           .set(auth(adminToken))
           .expect(200),
         request(server)
@@ -671,10 +681,10 @@ describe('API (e2e)', () => {
           .expect(200),
       ]);
 
-      expect(typeof (week.body as { count: number }).count).toBe('number');
-      expect(
-        typeof (revenue.body as { revenue: number }).revenue,
-      ).toBe('number');
+      expect(typeof (classes.body as { count: number }).count).toBe('number');
+      expect(typeof (revenue.body as { revenue: number }).revenue).toBe(
+        'number',
+      );
     });
 
     it('próximas aulas de hoje vêm ordenadas por horário', async () => {
@@ -891,8 +901,12 @@ describe('API (e2e)', () => {
       ).body as { dueDate: string; amount: string; classesCount: number }[];
 
       const month = currentMonth();
-      const parcelaAntes = before.find((item) => item.dueDate.startsWith(month));
-      const parcelaDepois = after.find((item) => item.dueDate.startsWith(month));
+      const parcelaAntes = before.find((item) =>
+        item.dueDate.startsWith(month),
+      );
+      const parcelaDepois = after.find((item) =>
+        item.dueDate.startsWith(month),
+      );
 
       /*
        * O aluno paga o plano, não as aulas: o valor da parcela é o mesmo antes
@@ -932,7 +946,9 @@ describe('API (e2e)', () => {
         (await createClass({ scheduledAt: todayAt(13), durationMinutes: 60 }))
           .status,
       ).toBe(201);
-      expect((await createClass({ scheduledAt: todayAt(14) })).status).toBe(201);
+      expect((await createClass({ scheduledAt: todayAt(14) })).status).toBe(
+        201,
+      );
     });
 
     it('recusa matéria que o professor não leciona', async () => {
@@ -1101,7 +1117,10 @@ describe('API (e2e)', () => {
           .get(`/classes/${aulaId}`)
           .set(auth(alunoToken))
           .expect(200)
-      ).body as { amountCharged: string | null; commissionAmount: string | null };
+      ).body as {
+        amountCharged: string | null;
+        commissionAmount: string | null;
+      };
 
       expect(comoAluno.amountCharged).toBeNull();
       expect(comoAluno.commissionAmount).toBeNull();
@@ -1111,7 +1130,10 @@ describe('API (e2e)', () => {
           .get(`/classes/${aulaId}`)
           .set(auth(profToken))
           .expect(200)
-      ).body as { amountCharged: string | null; commissionAmount: string | null };
+      ).body as {
+        amountCharged: string | null;
+        commissionAmount: string | null;
+      };
 
       expect(comoProfessor.commissionAmount).not.toBeNull();
       expect(comoProfessor.amountCharged).toBeNull();
