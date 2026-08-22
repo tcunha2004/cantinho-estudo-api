@@ -321,15 +321,15 @@ describe('API (e2e)', () => {
         .expect(400);
     });
 
-    it('plano do aluno traz preço da região e o equivalente do Cantinho', async () => {
+    it('plano do aluno traz a mensalidade do plano contratado', async () => {
       const response = await request(server)
         .get('/students/me/plan')
         .set(auth(alunoToken))
         .expect(200);
 
       const plan = response.body as Record<string, string>;
+      expect(Number(plan.monthlyPrice)).toBeGreaterThan(0);
       expect(Number(plan.hourPrice)).toBeGreaterThan(0);
-      expect(Number(plan.cantinhoHourPrice)).toBeGreaterThan(0);
       expect(plan.contractStatus).toBe('active');
     });
 
@@ -748,7 +748,7 @@ describe('API (e2e)', () => {
   });
 
   describe('ciclo de vida da aula', () => {
-    it('cria, aparece na agenda, conclui e entra em receita e comissão', async () => {
+    it('cria, aparece na agenda, conclui e entra em comissão — sem mexer na receita', async () => {
       const month = currentMonth();
       const scheduledAt = todayAt(7);
 
@@ -814,8 +814,9 @@ describe('API (e2e)', () => {
       };
 
       expect(completed.status).toBe(ClassStatus.COMPLETED);
-      expect(Number(completed.amountCharged)).toBeGreaterThan(0);
       expect(Number(completed.commissionAmount)).toBeGreaterThan(0);
+      /* Aluno de plano mensal não é cobrado por aula. */
+      expect(completed.amountCharged).toBeNull();
 
       /* Aula no Cantinho: comissão é a da região Cantinho × horas. */
       const regions = (
@@ -841,15 +842,16 @@ describe('API (e2e)', () => {
           .set(auth(profToken))
       ).body as { amountToReceive: number };
 
-      expect(revenueAfter.revenue - revenueBefore.revenue).toBeCloseTo(
-        Number(completed.amountCharged),
-        2,
-      );
+      /*
+       * A receita é a mensalidade, não a aula: concluir uma aula de plano
+       * mensal não muda o faturamento do mês. A comissão, essa sim, entra.
+       */
+      expect(revenueAfter.revenue).toBeCloseTo(revenueBefore.revenue, 2);
       expect(
         earningsAfter.amountToReceive - earningsBefore.amountToReceive,
       ).toBeCloseTo(Number(completed.commissionAmount), 2);
 
-      /* Reabrir descongela; cancelar tira da receita. */
+      /* Reabrir descongela; cancelar libera o horário. */
       await request(server)
         .patch(`/classes/${aula.id}/reopen`)
         .set(auth(adminToken))
@@ -868,7 +870,7 @@ describe('API (e2e)', () => {
       expect(revenueFinal.revenue).toBeCloseTo(revenueBefore.revenue, 2);
     });
 
-    it('a cobrança do aluno no mês acompanha a aula concluída', async () => {
+    it('a mensalidade do aluno não se move com a aula concluída', async () => {
       const scheduledAt = todayAt(8);
       await liberarHorario(scheduledAt);
       const created = await createClass({ scheduledAt });
@@ -893,18 +895,14 @@ describe('API (e2e)', () => {
       const parcelaDepois = after.find((item) => item.dueDate.startsWith(month));
 
       /*
-       * A parcela é apurada pelas aulas do CONTRATO dela. Se o contrato foi
-       * trocado depois da parcela ser gerada (troca de plano), a aula nova cai
-       * no contrato novo e a parcela do mês não se move — limitação conhecida,
-       * registrada em RELATORIO-TESTES.md. Nos dois casos vale: a apuração
-       * nunca perde aula nem devolve valor inválido.
+       * O aluno paga o plano, não as aulas: o valor da parcela é o mesmo antes
+       * e depois. A contagem de aulas do mês é só informativa e essa, sim, sobe.
        */
       expect(parcelaDepois).toBeDefined();
+      expect(parcelaDepois!.amount).toBe(parcelaAntes!.amount);
       expect(parcelaDepois!.classesCount).toBeGreaterThanOrEqual(
         parcelaAntes!.classesCount,
       );
-      expect(Number(parcelaDepois!.amount)).not.toBeNaN();
-      expect(Number(parcelaDepois!.amount)).toBeGreaterThanOrEqual(0);
       expect(parcelaDepois!.amount).toMatch(/^\d+\.\d{2}$/);
     });
 

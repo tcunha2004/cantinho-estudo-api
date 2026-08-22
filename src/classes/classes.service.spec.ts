@@ -52,7 +52,9 @@ const vila = {
 
 /* Query builder encadeável: guarda as chamadas e devolve o resultado dado. */
 function fakeQueryBuilder(result: unknown) {
-  const builder: Record<string, unknown> = { params: {} as Record<string, unknown> };
+  const builder: Record<string, unknown> = {
+    params: {} as Record<string, unknown>,
+  };
   for (const method of [
     'where',
     'andWhere',
@@ -86,14 +88,16 @@ function makeService() {
   };
   const contractRepository = { findOne: jest.fn(), find: jest.fn() };
   const teacherRepository = { findOne: jest.fn(), find: jest.fn() };
-  const planRepository = { findOne: jest.fn() };
+  const paymentRepository = {
+    createQueryBuilder: jest.fn(() => fakeQueryBuilder({ revenue: '0' })),
+  };
   const regionRepository = { findOne: jest.fn() };
 
   const service = new ClassesService(
     classRepository as never,
     contractRepository as never,
     teacherRepository as never,
-    planRepository as never,
+    paymentRepository as never,
     regionRepository as never,
   );
 
@@ -102,7 +106,7 @@ function makeService() {
     classRepository,
     contractRepository,
     teacherRepository,
-    planRepository,
+    paymentRepository,
     regionRepository,
   };
 }
@@ -372,12 +376,143 @@ describe('ClassesService', () => {
       ).rejects.toThrow('não possui um contrato ativo');
     });
 
+    it('recusa aula fora da vigência do contrato (Bronze vencido)', async () => {
+      const { service, teacherRepository, contractRepository } = makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher());
+      contractRepository.findOne.mockResolvedValue(
+        makeContract({ startDate: '2026-05-01', endDate: '2026-07-01' }),
+      );
+
+      await expect(
+        service.create(admin, {
+          studentId: 's1',
+          teacherId: 't1',
+          subjectId: 'sub1',
+          scheduledAt: '2026-08-10T14:00',
+          locationType: LocationType.SCHOOL,
+        }),
+      ).rejects.toThrow('O contrato do aluno terminou em 2026-07-01');
+    });
+
+    it('recusa quando o aluno já usou as aulas do mês', async () => {
+      const {
+        service,
+        teacherRepository,
+        contractRepository,
+        classRepository,
+      } = makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher());
+      contractRepository.findOne.mockResolvedValue(
+        makeContract({
+          plan: {
+            id: 'p1',
+            planType: PlanType.OURO,
+            frequency: Frequency.THREE_TIMES_WEEK,
+            hourPrice: '60.00',
+            classesCount: 12,
+          },
+        }),
+      );
+      classRepository.count.mockResolvedValue(12);
+
+      await expect(
+        service.create(admin, {
+          studentId: 's1',
+          teacherId: 't1',
+          subjectId: 'sub1',
+          scheduledAt: '2026-08-10T14:00',
+          locationType: LocationType.SCHOOL,
+        }),
+      ).rejects.toThrow('12 aulas por mês, e o mês já está completo');
+
+      /* Ouro conta por mês: o filtro precisa recortar agosto. */
+      expect(
+        classRepository.count.mock.calls[0][0].where.scheduledAt,
+      ).toBeDefined();
+    });
+
+    it('Bronze é pacote: as aulas valem para o contrato inteiro, não por mês', async () => {
+      const {
+        service,
+        teacherRepository,
+        contractRepository,
+        classRepository,
+      } = makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher());
+      contractRepository.findOne.mockResolvedValue(
+        makeContract({
+          plan: {
+            id: 'p-bronze',
+            planType: PlanType.BRONZE,
+            frequency: null,
+            hourPrice: '200.00',
+            classesCount: 10,
+            validityMonths: 2,
+          },
+        }),
+      );
+      classRepository.count.mockResolvedValue(10);
+
+      await expect(
+        service.create(admin, {
+          studentId: 's1',
+          teacherId: 't1',
+          subjectId: 'sub1',
+          scheduledAt: '2026-08-10T14:00',
+          locationType: LocationType.SCHOOL,
+        }),
+      ).rejects.toThrow('O pacote do aluno é de 10 aulas, e já está esgotado');
+
+      /* Sem recorte de mês: conta o contrato todo. */
+      expect(
+        classRepository.count.mock.calls[0][0].where.scheduledAt,
+      ).toBeUndefined();
+    });
+
+    it('avulsa não tem cota: nem consulta a contagem', async () => {
+      const {
+        service,
+        teacherRepository,
+        contractRepository,
+        classRepository,
+      } = makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher());
+      contractRepository.findOne.mockResolvedValue(
+        makeContract({
+          plan: {
+            id: 'p-avulsa',
+            planType: PlanType.AVULSA,
+            frequency: null,
+            hourPrice: '220.00',
+            classesCount: 1,
+          },
+        }),
+      );
+      classRepository.findOne.mockResolvedValue(makeClass());
+
+      await service.create(admin, {
+        studentId: 's1',
+        teacherId: 't1',
+        subjectId: 'sub1',
+        scheduledAt: '2026-08-10T14:00',
+        locationType: LocationType.SCHOOL,
+      });
+
+      expect(classRepository.count).not.toHaveBeenCalled();
+    });
+
     it('recusa quando o professor já tem aula no horário', async () => {
-      const { service, teacherRepository, contractRepository, classRepository } =
-        makeService();
+      const {
+        service,
+        teacherRepository,
+        contractRepository,
+        classRepository,
+      } = makeService();
       teacherRepository.findOne.mockResolvedValue(makeTeacher());
       contractRepository.findOne.mockResolvedValue(makeContract());
-      classRepository.createQueryBuilder.mockReturnValue(fakeQueryBuilder(true));
+      classRepository.createQueryBuilder.mockReturnValue(
+        fakeQueryBuilder(true),
+      );
 
       await expect(
         service.create(admin, {
@@ -391,8 +526,12 @@ describe('ClassesService', () => {
     });
 
     it('recusa quando o aluno já tem aula no horário', async () => {
-      const { service, teacherRepository, contractRepository, classRepository } =
-        makeService();
+      const {
+        service,
+        teacherRepository,
+        contractRepository,
+        classRepository,
+      } = makeService();
       teacherRepository.findOne.mockResolvedValue(makeTeacher());
       contractRepository.findOne.mockResolvedValue(makeContract());
       /* Primeiro check (professor) livre, segundo (aluno) ocupado. */
@@ -412,8 +551,12 @@ describe('ClassesService', () => {
     });
 
     it('cria agendada, com 60 minutos por padrão e sem valores congelados', async () => {
-      const { service, teacherRepository, contractRepository, classRepository } =
-        makeService();
+      const {
+        service,
+        teacherRepository,
+        contractRepository,
+        classRepository,
+      } = makeService();
       teacherRepository.findOne.mockResolvedValue(makeTeacher());
       contractRepository.findOne.mockResolvedValue(makeContract());
       classRepository.save.mockResolvedValue({ id: 'nova' });
@@ -543,18 +686,13 @@ describe('ClassesService', () => {
       );
     });
 
-    it('congela comissão e valor cobrado ao concluir aula no Cantinho', async () => {
-      const { service, classRepository, regionRepository, planRepository } =
-        makeService();
+    it('congela a comissão e não cobra o aluno: plano mensal paga a mensalidade', async () => {
+      const { service, classRepository, regionRepository } = makeService();
       jest.useFakeTimers().setSystemTime(new Date('2026-08-10T20:00:00.000Z'));
       classRepository.findOne.mockResolvedValue(
         makeClass({ durationMinutes: 90 }),
       );
       regionRepository.findOne.mockResolvedValue(cantinho);
-      planRepository.findOne.mockResolvedValue({
-        id: 'p1',
-        hourPrice: '60.00',
-      });
 
       await service.complete(admin, 'cl1');
 
@@ -564,14 +702,12 @@ describe('ClassesService', () => {
         region: cantinho,
         /* 1,5 h × R$ 25,00 de comissão da região */
         commissionAmount: '37.50',
-        /* 1,5 h × R$ 60,00 do plano equivalente, sem desconto */
-        amountCharged: '90.00',
+        amountCharged: null,
       });
     });
 
-    it('aula na casa do aluno usa a região do aluno, não a do Cantinho', async () => {
-      const { service, classRepository, planRepository, regionRepository } =
-        makeService();
+    it('aula na casa do aluno usa a região do aluno na comissão, não a do Cantinho', async () => {
+      const { service, classRepository, regionRepository } = makeService();
       jest.useFakeTimers().setSystemTime(new Date('2026-08-10T20:00:00.000Z'));
       classRepository.findOne.mockResolvedValue(
         makeClass({
@@ -585,7 +721,6 @@ describe('ClassesService', () => {
           }),
         }),
       );
-      planRepository.findOne.mockResolvedValue({ id: 'p2', hourPrice: '75.00' });
 
       await service.complete(admin, 'cl1');
 
@@ -594,41 +729,81 @@ describe('ClassesService', () => {
         expect.objectContaining({
           region: vila,
           commissionAmount: '35.00',
-          amountCharged: '75.00',
+          amountCharged: null,
         }),
       );
     });
 
-    it('aplica o desconto do contrato no valor cobrado', async () => {
-      const { service, classRepository, regionRepository, planRepository } =
-        makeService();
+    it('local da aula não muda o que o aluno paga: só a avulsa é cobrada por aula', async () => {
+      const { service, classRepository, regionRepository } = makeService();
       jest.useFakeTimers().setSystemTime(new Date('2026-08-10T20:00:00.000Z'));
+      /* Aluno da Vila da Serra estudando no Cantinho, que é mais barato. */
       classRepository.findOne.mockResolvedValue(
         makeClass({
-          studentContract: makeContract({ discountPercentage: '10.00' }),
+          locationType: LocationType.SCHOOL,
+          studentContract: makeContract({
+            plan: {
+              id: 'p-avulsa',
+              planType: PlanType.AVULSA,
+              frequency: null,
+              hourPrice: '220.00',
+            },
+            student: {
+              id: 's1',
+              region: vila,
+              user: { id: 'user-aluno', name: 'João Silva' },
+            },
+          }),
         }),
       );
       regionRepository.findOne.mockResolvedValue(cantinho);
-      planRepository.findOne.mockResolvedValue({ id: 'p1', hourPrice: '60.00' });
 
       await service.complete(admin, 'cl1');
 
       expect(classRepository.save).toHaveBeenCalledWith(
         expect.objectContaining({
-          amountCharged: '54.00',
+          /* Preço do plano contratado (Vila), não o do Cantinho onde a aula foi */
+          amountCharged: '220.00',
+          /* A comissão, essa sim, segue a região da aula */
+          commissionAmount: '25.00',
+        }),
+      );
+    });
+
+    it('aplica o desconto do contrato no valor da aula avulsa', async () => {
+      const { service, classRepository, regionRepository } = makeService();
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T20:00:00.000Z'));
+      classRepository.findOne.mockResolvedValue(
+        makeClass({
+          studentContract: makeContract({
+            discountPercentage: '10.00',
+            plan: {
+              id: 'p-avulsa',
+              planType: PlanType.AVULSA,
+              frequency: null,
+              hourPrice: '100.00',
+            },
+          }),
+        }),
+      );
+      regionRepository.findOne.mockResolvedValue(cantinho);
+
+      await service.complete(admin, 'cl1');
+
+      expect(classRepository.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amountCharged: '90.00',
           /* Desconto é do aluno: a comissão do professor não muda. */
           commissionAmount: '25.00',
         }),
       );
     });
 
-    it('falta cobra igual e paga comissão igual', async () => {
-      const { service, classRepository, regionRepository, planRepository } =
-        makeService();
+    it('falta paga comissão igual e também não cobra o aluno do plano mensal', async () => {
+      const { service, classRepository, regionRepository } = makeService();
       jest.useFakeTimers().setSystemTime(new Date('2026-08-10T20:00:00.000Z'));
       classRepository.findOne.mockResolvedValue(makeClass());
       regionRepository.findOne.mockResolvedValue(cantinho);
-      planRepository.findOne.mockResolvedValue({ id: 'p1', hourPrice: '60.00' });
 
       await service.markNoShow(admin, 'cl1');
 
@@ -636,21 +811,8 @@ describe('ClassesService', () => {
         expect.objectContaining({
           status: ClassStatus.NO_SHOW,
           commissionAmount: '25.00',
-          amountCharged: '60.00',
+          amountCharged: null,
         }),
-      );
-    });
-
-    it('falha quando não existe plano equivalente na região da aula', async () => {
-      const { service, classRepository, regionRepository, planRepository } =
-        makeService();
-      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T20:00:00.000Z'));
-      classRepository.findOne.mockResolvedValue(makeClass());
-      regionRepository.findOne.mockResolvedValue(cantinho);
-      planRepository.findOne.mockResolvedValue(null);
-
-      await expect(service.complete(admin, 'cl1')).rejects.toThrow(
-        'Plano equivalente não encontrado na região da aula',
       );
     });
 
@@ -681,7 +843,9 @@ describe('ClassesService', () => {
       classRepository.findOne.mockResolvedValue(
         makeClass({ status: ClassStatus.CANCELLED }),
       );
-      classRepository.createQueryBuilder.mockReturnValue(fakeQueryBuilder(true));
+      classRepository.createQueryBuilder.mockReturnValue(
+        fakeQueryBuilder(true),
+      );
 
       await expect(service.reopen(admin, 'cl1')).rejects.toThrow(
         ConflictException,
@@ -782,17 +946,23 @@ describe('ClassesService', () => {
   });
 
   describe('números do painel e dos ganhos', () => {
-    it('receita do mês soma o valor congelado das aulas faturáveis', async () => {
-      const { service, classRepository } = makeService();
-      classRepository.createQueryBuilder.mockReturnValue(
+    it('receita do mês soma as mensalidades do mês com as aulas avulsas', async () => {
+      const { service, classRepository, paymentRepository } = makeService();
+      paymentRepository.createQueryBuilder.mockReturnValue(
         fakeQueryBuilder({ revenue: '1320.00' }),
       );
+      classRepository.createQueryBuilder.mockReturnValue(
+        fakeQueryBuilder({ revenue: '220.00' }),
+      );
 
-      await expect(service.getMonthlyRevenue('2026-08')).resolves.toBe(1320);
+      await expect(service.getMonthlyRevenue('2026-08')).resolves.toBe(1540);
     });
 
-    it('receita zera quando não houve aula faturável', async () => {
-      const { service, classRepository } = makeService();
+    it('receita zera quando não há mensalidade nem avulsa no mês', async () => {
+      const { service, classRepository, paymentRepository } = makeService();
+      paymentRepository.createQueryBuilder.mockReturnValue(
+        fakeQueryBuilder({ revenue: '0' }),
+      );
       classRepository.createQueryBuilder.mockReturnValue(
         fakeQueryBuilder({ revenue: '0' }),
       );

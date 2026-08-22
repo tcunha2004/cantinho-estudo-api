@@ -358,19 +358,27 @@ async function handleExistingContracts(
  * Geração
  * ------------------------------------------------------------------ */
 
+/*
+ * Bronze é um pacote com validade em meses; Ouro e Prata vão até dezembro do
+ * ano em que começam (quem entra em maio paga de maio a dezembro); a avulsa
+ * não tem vigência. Mesma regra de StudentContractsService.
+ */
 function resolveEndDate(options: Options, plan: PlanEntity): string | null {
   if (options.end) {
     return options.end;
   }
 
-  /* Bronze tem validade de 2 meses; os outros planos são contínuos */
   if (plan.validityMonths) {
     return toDateString(
       addMonths(fromDateString(options.start), plan.validityMonths),
     );
   }
 
-  return null;
+  if (plan.planType === PlanType.AVULSA) {
+    return null;
+  }
+
+  return `${options.start.slice(0, 4)}-12-31`;
 }
 
 /*
@@ -378,21 +386,27 @@ function resolveEndDate(options: Options, plan: PlanEntity): string | null {
  * (ou o fim do contrato, se já passou). As passadas saem pagas, a do mês
  * corrente fica em aberto — e num contrato cancelado, cancelada.
  *
- * O aluno não tem mensalidade fixa: o valor de cada parcela é apurado pelas
- * aulas do mês (StudentsService.findPaymentHistory()), e este script cria o
- * contrato sem aulas. Por isso as parcelas nascem com amount 0 — um calendário
- * vazio que se preenche quando `npm run classes:create` gerar aulas para o
- * contrato.
+ * O valor é a mensalidade do plano com o desconto do contrato, fixa: o aluno
+ * paga o plano, não as aulas. Duas exceções:
+ *
+ *   - Bronze é um pacote, então sai uma parcela única no mês da contratação;
+ *   - a avulsa não tem mensalidade — as parcelas nascem zeradas e o valor é
+ *     apurado pelas aulas do mês (StudentsService.toPaymentDto()).
  */
 function buildPayments(
   manager: EntityManager,
   contract: StudentContractEntity,
+  plan: PlanEntity,
   startDate: Date,
   endDate: Date | null,
   today: Date,
 ): PaymentEntity[] {
   const paymentRepository = manager.getRepository(PaymentEntity);
-  const amount = money(0);
+  const discount = Number(contract.discountPercentage ?? 0) / 100;
+  const amount =
+    plan.planType === PlanType.AVULSA
+      ? money(0)
+      : money(Number(plan.monthlyPrice) * (1 - discount));
 
   const lastBilled = endDate && endDate < today ? endDate : today;
   const lastMonth = new Date(
@@ -403,9 +417,14 @@ function buildPayments(
 
   const payments: PaymentEntity[] = [];
 
+  /* Pacote: uma parcela só, no mês da contratação */
+  const lastCursor = plan.validityMonths
+    ? new Date(startDate.getFullYear(), startDate.getMonth(), 1)
+    : lastMonth;
+
   for (
     let cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-    cursor <= lastMonth;
+    cursor <= lastCursor;
     cursor = addMonths(cursor, 1)
   ) {
     const dueDate = at(
@@ -478,6 +497,7 @@ async function createContract(ds: DataSource, options: Options): Promise<void> {
       ? buildPayments(
           manager,
           contract,
+          plan,
           fromDateString(options.start),
           endDate ? fromDateString(endDate) : null,
           today,
@@ -539,10 +559,6 @@ function report(
 
   console.log('');
   console.log(`Mensalidades criadas: ${payments.length}`);
-  console.log(
-    '  (calendário vazio — o valor de cada parcela é apurado pelas aulas do mês; ' +
-      'rode `npm run classes:create` para gerar aulas e preencher os valores)',
-  );
   for (const item of payments) {
     console.log(
       `  ${item.dueDate}  R$ ${String(item.amount).padStart(9)}  ${item.status}`,

@@ -11,9 +11,9 @@ import {
   FindOptionsRelations,
   FindOptionsWhere,
   In,
-  IsNull,
   LessThan,
   MoreThan,
+  Not,
   Repository,
   SelectQueryBuilder,
 } from 'typeorm';
@@ -42,9 +42,9 @@ import { StudentContractEntity } from '../student-contracts/entity/student-contr
 import { ContractStatus } from '../student-contracts/enums/contract-status.enum';
 import { TeacherEntity } from '../teachers/entity/teacher.entity';
 import { UserPayload } from '../auth/auth.service';
-import { PlanEntity } from '../plans/entity/plan.entity';
 import { PlanType } from '../plans/enums/plan-type.enum';
-import { Frequency } from '../plans/enums/frequency.enum';
+import { PaymentEntity } from '../payments/entity/payment.entity';
+import { PaymentStatus } from '../payments/enums/payment-status.enum';
 import { RegionEntity } from '../regions/entity/region.entity';
 
 /* Relações que a agenda e o detalhe da aula sempre precisam carregar. */
@@ -87,8 +87,8 @@ export class ClassesService {
     private readonly contractRepository: Repository<StudentContractEntity>,
     @InjectRepository(TeacherEntity)
     private readonly teacherRepository: Repository<TeacherEntity>,
-    @InjectRepository(PlanEntity)
-    private readonly planRepository: Repository<PlanEntity>,
+    @InjectRepository(PaymentEntity)
+    private readonly paymentRepository: Repository<PaymentEntity>,
     @InjectRepository(RegionEntity)
     private readonly regionRepository: Repository<RegionEntity>,
   ) {}
@@ -102,8 +102,7 @@ export class ClassesService {
   }
 
   /*
-   * Receita do mês atual: soma o valor cobrado (amount_charged, congelado no
-   * encerramento) das aulas cobráveis do mês.
+   * Receita do mês atual — ver sumRevenue.
    */
   public async getCurrentMonthRevenue(): Promise<number> {
     const { start, end } = getCurrentMonthRange();
@@ -111,9 +110,7 @@ export class ClassesService {
   }
 
   /*
-   * Receita de um mês específico (month no formato YYYY-MM): soma o valor
-   * congelado cobrado por cada aula cobrável do mês, independente do plano.
-   * Ignora a comissão do professor.
+   * Receita de um mês específico (month no formato YYYY-MM) — ver sumRevenue.
    */
   public async getMonthlyRevenue(month: string): Promise<number> {
     const [year, monthNumber] = month.split('-').map(Number);
@@ -122,21 +119,43 @@ export class ClassesService {
   }
 
   /*
-   * Soma o valor cobrado do aluno (amount_charged) das aulas cobráveis
-   * (realizadas e faltas) cujo scheduled_at está dentro do intervalo. O valor é
-   * congelado no encerramento da aula, já refletindo a duração real e o desconto
-   * do contrato — por isso não há join com plan/contract e a receita histórica
-   * é imutável.
+   * Receita do período, das duas formas em que a escola cobra:
+   *
+   *   - planos mensais: a mensalidade das parcelas que vencem no período,
+   *     independente de quantas aulas o aluno fez e de onde as fez. O valor sai
+   *     de payments.amount, congelado quando a parcela foi gerada;
+   *   - aula avulsa: o valor congelado de cada aula cobrável, que é a única
+   *     modalidade cobrada aula a aula.
+   *
+   * Parcela cancelada não é receita. A comissão do professor não entra aqui.
    */
   private async sumRevenue(start: string, end: string): Promise<number> {
-    const result = await this.classRepository
+    const monthly = await this.paymentRepository
+      .createQueryBuilder('payment')
+      .innerJoin('payment.studentContract', 'contract')
+      .innerJoin('contract.plan', 'plan')
+      .where('payment.status != :cancelled', {
+        cancelled: PaymentStatus.CANCELLED,
+      })
+      .andWhere('payment.due_date BETWEEN :from AND :to', {
+        from: start.slice(0, 10),
+        to: end.slice(0, 10),
+      })
+      .andWhere('plan.plan_type != :avulsa', { avulsa: PlanType.AVULSA })
+      .select('COALESCE(SUM(payment.amount), 0)', 'revenue')
+      .getRawOne<{ revenue: string }>();
+
+    const perClass = await this.classRepository
       .createQueryBuilder('class')
+      .innerJoin('class.studentContract', 'contract')
+      .innerJoin('contract.plan', 'plan')
       .where('class.status IN (:...billable)', { billable: BILLABLE_STATUSES })
       .andWhere('class.scheduledAt BETWEEN :start AND :end', { start, end })
+      .andWhere('plan.plan_type = :avulsa', { avulsa: PlanType.AVULSA })
       .select('COALESCE(SUM(class.amount_charged), 0)', 'revenue')
       .getRawOne<{ revenue: string }>();
 
-    return Number(result?.revenue ?? 0);
+    return Number(monthly?.revenue ?? 0) + Number(perClass?.revenue ?? 0);
   }
 
   /*
@@ -399,9 +418,12 @@ export class ClassesService {
     const teacher = await this.resolveTeacher(user, dto.teacherId);
     this.assertTeacherTeachesSubject(teacher, dto.subjectId);
 
-    const contract = await this.resolveActiveContract(dto.studentId);
     const scheduledAt = toNaiveTimestamp(dto.scheduledAt);
     const durationMinutes = dto.durationMinutes ?? 60;
+
+    const contract = await this.resolveActiveContract(dto.studentId);
+    this.assertWithinContractPeriod(contract, scheduledAt);
+    await this.assertWithinPlanQuota(contract, scheduledAt);
 
     await this.assertNoConflicts({
       teacherId: teacher.id,
@@ -434,7 +456,10 @@ export class ClassesService {
     id: string,
     dto: UpdateClassDto,
   ): Promise<ClassDetailDto> {
-    const item = await this.findAccessibleClass(user, id);
+    /* O plano vem junto: mudar aluno ou data reavalia vigência e cota. */
+    const item = await this.findAccessibleClass(user, id, {
+      studentContract: { student: { user: true }, plan: true },
+    });
 
     if (user.role === 'professor' && dto.teacherId) {
       throw new ForbiddenException(
@@ -468,6 +493,10 @@ export class ClassesService {
       ? toNaiveTimestamp(dto.scheduledAt)
       : toNaiveTimestamp(toNaiveIso(item.scheduledAt));
     const durationMinutes = dto.durationMinutes ?? item.durationMinutes;
+
+    this.assertWithinContractPeriod(contract, scheduledAt);
+    /* A própria aula não conta contra a cota que ela precisa caber. */
+    await this.assertWithinPlanQuota(contract, scheduledAt, item.id);
 
     await this.assertNoConflicts({
       teacherId: teacher.id,
@@ -522,10 +551,14 @@ export class ClassesService {
   }
 
   /*
-   * Encerra a aula e congela ali mesmo a região, a comissão do professor e o
-   * valor cobrado do aluno. Congelar é o ponto central: preço de plano, comissão
-   * de região e desconto de contrato mudam com o tempo, e o que já foi apurado
-   * não pode mudar junto. Todo relatório financeiro lê esses valores.
+   * Encerra a aula e congela ali mesmo a região e a comissão do professor —
+   * preço e comissão mudam com o tempo, e o que já foi apurado não pode mudar
+   * junto.
+   *
+   * O aluno, esse, não é cobrado por aula: paga a mensalidade do plano, faça
+   * ele 1 ou 20 aulas, no Cantinho ou em casa. A única exceção é a aula avulsa,
+   * que é justamente a modalidade sem mensalidade — e mesmo ela usa o preço do
+   * plano contratado, não o da região onde a aula aconteceu.
    */
   private async finalize(
     user: UserPayload,
@@ -552,20 +585,16 @@ export class ClassesService {
       item.locationType,
       student.region,
     );
-    const equivalentPlan = await this.resolveEquivalentPlan(
-      region,
-      plan.planType,
-      plan.frequency,
-    );
 
     await this.classRepository.save({
       id: item.id,
       status,
       region,
       commissionAmount: money(Number(region.classCommission) * hours),
-      amountCharged: money(
-        Number(equivalentPlan.hourPrice) * hours * (1 - discount),
-      ),
+      amountCharged:
+        plan.planType === PlanType.AVULSA
+          ? money(Number(plan.hourPrice) * hours * (1 - discount))
+          : null,
     });
 
     return await this.findById(user, item.id);
@@ -573,8 +602,8 @@ export class ClassesService {
 
   /*
    * Região da aula: no Cantinho (school) é sempre a região Cantinho; na casa
-   * do aluno (home) é a região onde ele mora. Determina tanto a comissão do
-   * professor quanto o plano equivalente usado para cobrar o aluno.
+   * do aluno (home) é a região onde ele mora. Determina a comissão do professor
+   * — e só ela: o que o aluno paga não depende de onde a aula acontece.
    */
   private async resolveClassRegion(
     locationType: LocationType,
@@ -595,34 +624,6 @@ export class ClassesService {
     }
 
     return cantinho;
-  }
-
-  /*
-   * O contrato aponta para o plano da região do aluno, mas a aula pode
-   * acontecer em outra região (ex.: aluno de fora estudando no Cantinho).
-   * Busca o plano de mesmo tipo e frequência na região onde a aula ocorreu —
-   * é ele que define o valor cobrado, não o plano do contrato.
-   */
-  private async resolveEquivalentPlan(
-    region: RegionEntity,
-    planType: PlanType,
-    frequency: Frequency | null,
-  ): Promise<PlanEntity> {
-    const plan = await this.planRepository.findOne({
-      where: {
-        region: { id: region.id },
-        planType,
-        frequency: frequency ?? IsNull(),
-      },
-    });
-
-    if (!plan) {
-      throw new NotFoundException(
-        'Plano equivalente não encontrado na região da aula',
-      );
-    }
-
-    return plan;
   }
 
   /*
@@ -769,7 +770,7 @@ export class ClassesService {
   ): Promise<StudentContractEntity> {
     const contract = await this.contractRepository.findOne({
       where: { student: { id: studentId }, status: ContractStatus.ACTIVE },
-      relations: { student: true },
+      relations: { student: true, plan: true },
       order: { startDate: 'DESC' },
     });
 
@@ -780,6 +781,74 @@ export class ClassesService {
     }
 
     return contract;
+  }
+
+  /*
+   * Contrato ativo não basta: o Bronze vale 2 meses e o Ouro/Prata vão até
+   * dezembro. Fora dessa janela a aula não tem cobertura — nem cobrança nem
+   * direito — então não pode ser agendada.
+   */
+  private assertWithinContractPeriod(
+    contract: StudentContractEntity,
+    scheduledAt: string,
+  ): void {
+    const day = scheduledAt.slice(0, 10);
+
+    if (day < contract.startDate) {
+      throw new BadRequestException(
+        `O contrato do aluno começa em ${contract.startDate}`,
+      );
+    }
+
+    if (contract.endDate && day > contract.endDate) {
+      throw new BadRequestException(
+        `O contrato do aluno terminou em ${contract.endDate}`,
+      );
+    }
+  }
+
+  /*
+   * Aulas a que o plano dá direito. Como a cobrança é a mensalidade, sem teto o
+   * aluno marcaria aulas à vontade pelo mesmo valor — e cada aula extra ainda
+   * geraria comissão de professor.
+   *
+   * Ouro e Prata contam por mês (a mensalidade se repete todo mês); o Bronze é
+   * um pacote, então as aulas valem para o contrato inteiro. A avulsa é a única
+   * cobrada por aula, logo não tem por que limitar.
+   *
+   * Aula cancelada não consome a cota — só o que ocupou o horário do professor.
+   */
+  private async assertWithinPlanQuota(
+    contract: StudentContractEntity,
+    scheduledAt: string,
+    exceptClassId?: string,
+  ): Promise<void> {
+    const quota = contract.plan.classesCount;
+
+    if (contract.plan.planType === PlanType.AVULSA || !quota) {
+      return;
+    }
+
+    const perMonth = contract.plan.planType !== PlanType.BRONZE;
+    const [year, month] = scheduledAt.slice(0, 7).split('-').map(Number);
+    const { start, end } = getMonthRange(year, month);
+
+    const used = await this.classRepository.count({
+      where: {
+        studentContract: { id: contract.id },
+        status: In(BLOCKING_STATUSES),
+        ...(exceptClassId ? { id: Not(exceptClassId) } : {}),
+        ...(perMonth ? { scheduledAt: Between(start, end) } : {}),
+      },
+    });
+
+    if (used >= quota) {
+      throw new BadRequestException(
+        perMonth
+          ? `O plano do aluno dá direito a ${quota} aulas por mês, e o mês já está completo`
+          : `O pacote do aluno é de ${quota} aulas, e já está esgotado`,
+      );
+    }
   }
 
   /*

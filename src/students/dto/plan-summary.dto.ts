@@ -4,6 +4,7 @@ import { PlanType } from '../../plans/enums/plan-type.enum';
 export class PlanSummaryDto {
   planType: PlanType;
   frequency: Frequency | null;
+  monthlyPrice: string;
   hourPrice: string;
   /* Quantidade de aulas no mês */
   classesCount: number | null;

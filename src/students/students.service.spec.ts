@@ -49,8 +49,6 @@ function makeService(overrides: Record<string, unknown> = {}) {
   const userRepository = { update: jest.fn() };
   const studentContractsService = {
     update: jest.fn(),
-    replace: jest.fn(),
-    hasOpenPayment: jest.fn().mockResolvedValue(false),
     schedulePlanChange: jest.fn(),
     clearPendingPlanChange: jest.fn(),
     applyPendingPlanChange: jest.fn().mockResolvedValue(null),
@@ -348,20 +346,22 @@ describe('StudentsService', () => {
       expect(studentContractsService.update).toHaveBeenCalledWith('c1', {
         status: ContractStatus.CANCELLED,
       });
-      expect(studentContractsService.replace).not.toHaveBeenCalled();
+      expect(studentContractsService.schedulePlanChange).not.toHaveBeenCalled();
     });
 
-    it('versiona o contrato quando o plano muda', async () => {
+    it('agenda a troca quando o plano muda — nunca troca na hora', async () => {
       const { service, studentRepository, studentContractsService } =
         makeService();
       studentRepository.findOne.mockResolvedValue(makeStudent());
 
       await service.update('s1', { planId: 'p2' });
 
-      expect(studentContractsService.replace).toHaveBeenCalledWith('c1', {
-        planId: 'p2',
-        discountPercentage: null,
-      });
+      /* Só se efetiva quando o admin confirmar o pagamento do mês, para o mês
+       * da solicitação ser cobrado pelo plano antigo. */
+      expect(studentContractsService.schedulePlanChange).toHaveBeenCalledWith(
+        'c1',
+        { planId: 'p2', discountPercentage: null },
+      );
     });
 
     it('não versiona quando o plano enviado é o mesmo', async () => {
@@ -371,7 +371,7 @@ describe('StudentsService', () => {
 
       await service.update('s1', { planId: 'p1' });
 
-      expect(studentContractsService.replace).not.toHaveBeenCalled();
+      expect(studentContractsService.schedulePlanChange).not.toHaveBeenCalled();
     });
 
     it('não versiona quando o desconto muda só de formato ("10" x "10.00")', async () => {
@@ -385,7 +385,7 @@ describe('StudentsService', () => {
 
       await service.update('s1', { discountPercentage: '10' });
 
-      expect(studentContractsService.replace).not.toHaveBeenCalled();
+      expect(studentContractsService.schedulePlanChange).not.toHaveBeenCalled();
     });
 
     it('versiona quando o desconto muda de valor', async () => {
@@ -399,25 +399,10 @@ describe('StudentsService', () => {
 
       await service.update('s1', { discountPercentage: '15' });
 
-      expect(studentContractsService.replace).toHaveBeenCalledWith('c1', {
-        planId: 'p1',
-        discountPercentage: '15.00',
-      });
-    });
-
-    it('agenda a troca em vez de trocar na hora quando há parcela em aberto', async () => {
-      const { service, studentRepository, studentContractsService } =
-        makeService();
-      studentRepository.findOne.mockResolvedValue(makeStudent());
-      studentContractsService.hasOpenPayment.mockResolvedValue(true);
-
-      await service.update('s1', { planId: 'p2' });
-
       expect(studentContractsService.schedulePlanChange).toHaveBeenCalledWith(
         'c1',
-        { planId: 'p2', discountPercentage: null },
+        { planId: 'p1', discountPercentage: '15.00' },
       );
-      expect(studentContractsService.replace).not.toHaveBeenCalled();
     });
 
     it('voltar pro plano/desconto atual descarta a troca agendada', async () => {
@@ -439,7 +424,7 @@ describe('StudentsService', () => {
         studentContractsService.clearPendingPlanChange,
       ).toHaveBeenCalledWith('c1');
       expect(studentContractsService.schedulePlanChange).not.toHaveBeenCalled();
-      expect(studentContractsService.replace).not.toHaveBeenCalled();
+      expect(studentContractsService.schedulePlanChange).not.toHaveBeenCalled();
     });
 
     it('não descarta a troca agendada quando o admin não toca em plano/desconto', async () => {
@@ -504,7 +489,7 @@ describe('StudentsService', () => {
   });
 
   describe('findStudentPlan', () => {
-    it('usa o plano da região do aluno e o equivalente do Cantinho', async () => {
+    it('devolve a mensalidade do plano contratado, já com o desconto', async () => {
       const { service, studentRepository, planRepository } = makeService();
       studentRepository.findOne.mockResolvedValue(
         makeStudent({
@@ -512,35 +497,28 @@ describe('StudentsService', () => {
           contracts: [
             makeContract({
               discountPercentage: '10.00',
-              plan: makePlan({ hourPrice: '75.00', region: vila }),
+              plan: makePlan({
+                hourPrice: '75.00',
+                monthlyPrice: '900.00',
+                region: vila,
+              }),
             }),
           ],
         }),
-      );
-      planRepository.findOne.mockResolvedValue(
-        makePlan({ hourPrice: '60.00' }),
       );
 
       const plan = await service.findStudentPlan('u1');
 
       expect(plan).toMatchObject({
         studentName: 'Ana Souza',
+        monthlyPrice: '810.00',
         hourPrice: '75.00',
-        cantinhoHourPrice: '60.00',
         region: 'Vila da Serra',
         discountPercentage: '10.00',
         contractStatus: ContractStatus.ACTIVE,
       });
-    });
-
-    it('não busca equivalente quando o plano já é do Cantinho', async () => {
-      const { service, studentRepository, planRepository } = makeService();
-      studentRepository.findOne.mockResolvedValue(makeStudent());
-
-      const plan = await service.findStudentPlan('u1');
-
+      /* Não existe mais plano equivalente de outra região a consultar. */
       expect(planRepository.findOne).not.toHaveBeenCalled();
-      expect(plan.cantinhoHourPrice).toBe('60.00');
     });
 
     it('mostra o plano do contrato vigente, não do cancelado no mesmo dia', async () => {
@@ -576,20 +554,6 @@ describe('StudentsService', () => {
       studentRepository.findOne.mockResolvedValue(
         makeStudent({ contracts: [] }),
       );
-
-      await expect(service.findStudentPlan('u1')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-
-    it('lança 404 quando não existe plano equivalente no Cantinho', async () => {
-      const { service, studentRepository, planRepository } = makeService();
-      studentRepository.findOne.mockResolvedValue(
-        makeStudent({
-          contracts: [makeContract({ plan: makePlan({ region: vila }) })],
-        }),
-      );
-      planRepository.findOne.mockResolvedValue(null);
 
       await expect(service.findStudentPlan('u1')).rejects.toThrow(
         NotFoundException,
@@ -647,13 +611,14 @@ describe('StudentsService', () => {
 
       const [payment] = await service.findPaymentHistory('u1');
 
-      /* Ignora payments.amount: o valor vem das aulas. */
-      expect(payment.amount).toBe('540.00');
+      /* Plano mensal: o valor é a mensalidade congelada, não a soma das aulas. */
+      expect(payment.amount).toBe('999.00');
+      /* A contagem de aulas continua, agora só como informação. */
       expect(payment.classesCount).toBe(9);
       expect(payment.planType).toBe(PlanType.OURO);
     });
 
-    it('devolve zero quando o mês não teve aula faturável', async () => {
+    it('mensalidade não muda quando o mês não teve aula: o aluno paga o plano', async () => {
       const { service, studentRepository, paymentRepository, classRepository } =
         makeService();
       studentRepository.findOne.mockResolvedValue(makeStudent());
@@ -673,8 +638,35 @@ describe('StudentsService', () => {
 
       const [payment] = await service.findPaymentHistory('u1');
 
-      expect(payment.amount).toBe('0.00');
+      expect(payment.amount).toBe('999.00');
       expect(payment.classesCount).toBe(0);
+    });
+
+    it('avulsa é a exceção: o valor é apurado pelas aulas do mês', async () => {
+      const { service, studentRepository, paymentRepository, classRepository } =
+        makeService();
+      studentRepository.findOne.mockResolvedValue(makeStudent());
+      paymentRepository.find.mockResolvedValue([
+        {
+          id: 'pay1',
+          amount: '0.00',
+          dueDate: '2026-08-10',
+          paidAt: null,
+          status: 'pending',
+          studentContract: {
+            id: 'c1',
+            plan: makePlan({ planType: PlanType.AVULSA }),
+          },
+        },
+      ]);
+      classRepository.createQueryBuilder.mockReturnValue(
+        fakeQueryBuilder({ amount: '440', classesCount: '2' }),
+      );
+
+      const [payment] = await service.findPaymentHistory('u1');
+
+      expect(payment.amount).toBe('440.00');
+      expect(payment.classesCount).toBe(2);
     });
 
     it('lança 404 quando o aluno não existe', async () => {
@@ -736,8 +728,8 @@ describe('StudentsService', () => {
 
       expect(result.status).toBe(PaymentStatus.PAID);
       expect(result.paidAt).not.toBeNull();
-      /* O valor continua vindo das aulas, não de payments.amount. */
-      expect(result.amount).toBe('540.00');
+      /* Plano mensal: o valor é a mensalidade congelada na parcela. */
+      expect(result.amount).toBe('999.00');
     });
 
     it('reabrir a parcela limpa o paidAt', async () => {
@@ -780,7 +772,7 @@ describe('StudentsService', () => {
     });
 
     describe('parcela do mês seguinte', () => {
-      it('cria ao passar a ser paga: mesmo dia, mês seguinte, zerada e pendente', async () => {
+      it('cria ao passar a ser paga: mesmo dia, mês seguinte, com a mensalidade do plano', async () => {
         const { service, paymentRepository, classRepository } = makeService();
         const payment = makePayment();
         mockFindOne(paymentRepository, payment);
@@ -795,7 +787,8 @@ describe('StudentsService', () => {
 
         expect(paymentRepository.create).toHaveBeenCalledWith({
           studentContract: payment.studentContract,
-          amount: '0.00',
+          /* Mensalidade do plano (720), não o que as aulas somaram */
+          amount: '720.00',
           dueDate: '2026-09-10',
           paidAt: null,
           status: PaymentStatus.PENDING,
@@ -836,6 +829,54 @@ describe('StudentsService', () => {
 
         expect(paymentRepository.create).not.toHaveBeenCalled();
         expect(paymentRepository.save).toHaveBeenCalledTimes(1);
+      });
+
+      it('não gera parcela depois do fim do contrato (Ouro para em dezembro)', async () => {
+        const { service, paymentRepository, classRepository } = makeService();
+        const payment = makePayment({
+          dueDate: '2026-12-10',
+          studentContract: {
+            id: 'c1',
+            status: ContractStatus.ACTIVE,
+            endDate: '2026-12-31',
+            plan: makePlan(),
+            pendingPlan: null,
+          },
+        });
+        mockFindOne(paymentRepository, payment);
+        paymentRepository.save.mockImplementation((saved: unknown) => saved);
+        classRepository.createQueryBuilder.mockReturnValue(
+          fakeQueryBuilder({ amount: '0', classesCount: '0' }),
+        );
+
+        await service.updatePayment('s1', 'pay1', {
+          status: PaymentStatus.PAID,
+        });
+
+        expect(paymentRepository.create).not.toHaveBeenCalled();
+      });
+
+      it('Bronze é pacote: pago o pacote, não há próxima parcela', async () => {
+        const { service, paymentRepository, classRepository } = makeService();
+        const payment = makePayment({
+          studentContract: {
+            id: 'c1',
+            status: ContractStatus.ACTIVE,
+            plan: makePlan({ planType: PlanType.BRONZE, validityMonths: 2 }),
+            pendingPlan: null,
+          },
+        });
+        mockFindOne(paymentRepository, payment);
+        paymentRepository.save.mockImplementation((saved: unknown) => saved);
+        classRepository.createQueryBuilder.mockReturnValue(
+          fakeQueryBuilder({ amount: '0', classesCount: '0' }),
+        );
+
+        await service.updatePayment('s1', 'pay1', {
+          status: PaymentStatus.PAID,
+        });
+
+        expect(paymentRepository.create).not.toHaveBeenCalled();
       });
 
       it('não gera parcela quando o contrato está cancelado', async () => {

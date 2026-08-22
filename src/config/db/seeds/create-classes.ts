@@ -1,11 +1,10 @@
 import 'dotenv/config';
-import { DataSource, EntityManager, In } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import dataSource from '../data-source';
 import { TeacherEntity } from '../../../teachers/entity/teacher.entity';
 import { SubjectEntity } from '../../../subjects/entity/subject.entity';
 import { StudentContractEntity } from '../../../student-contracts/entity/student-contract.entity';
 import { ClassEntity } from '../../../classes/entity/class.entity';
-import { PlanEntity } from '../../../plans/entity/plan.entity';
 import { RegionEntity } from '../../../regions/entity/region.entity';
 import { ContractStatus } from '../../../student-contracts/enums/contract-status.enum';
 import {
@@ -13,7 +12,7 @@ import {
   ClassStatus,
 } from '../../../classes/enums/class-status.enum';
 import { LocationType } from '../../../classes/enums/location-type.enum';
-import { PaymentEntity } from '../../../payments/entity/payment.entity';
+import { PlanType } from '../../../plans/enums/plan-type.enum';
 import {
   addDays,
   at,
@@ -43,9 +42,9 @@ const CANTINHO_REGION_SLUG = 'cantinho';
  * no_show) e 10 nos próximos 15 dias (agendadas), uma por dia, espalhadas ao
  * longo da janela.
  *
- * As aulas passadas concluídas congelam região, comissão e valor cobrado do
- * mesmo jeito que o seed — sem isso a receita do mês e os ganhos do professor
- * ficam zerados.
+ * As aulas passadas concluídas congelam região e comissão do mesmo jeito que o
+ * app — sem isso os ganhos do professor ficam zerados. Valor cobrado do aluno
+ * só existe na avulsa: nos demais planos a cobrança é a mensalidade.
  *
  * Os alunos vêm dos contratos ativos já cadastrados (round-robin), e as
  * disciplinas, das que o professor dá aula. Rodar duas vezes soma aulas, não
@@ -242,29 +241,16 @@ async function resolveContracts(
 
 interface Pricing {
   cantinhoRegion: RegionEntity;
-  planByKey: Map<string, PlanEntity>;
 }
 
 /*
- * Carrega a região Cantinho e todos os planos (com a região de cada um), para
- * resolver em memória a região e o plano equivalente de cada aula — mesma
- * regra de ClassesService.finalize() e do seed.
+ * Carrega a região Cantinho, usada como região das aulas na sede — é ela que
+ * define a comissão do professor, mesma regra de ClassesService.finalize().
  */
 async function resolvePricing(manager: EntityManager): Promise<Pricing> {
-  const plans = await manager
-    .getRepository(PlanEntity)
-    .find({ relations: { region: true } });
-
-  const planByKey = new Map(
-    plans.map((plan) => [
-      `${plan.region.slug}|${plan.planType}|${plan.frequency ?? 'null'}`,
-      plan,
-    ]),
-  );
-
-  const cantinhoRegion = plans.find(
-    (plan) => plan.region.slug === CANTINHO_REGION_SLUG,
-  )?.region;
+  const cantinhoRegion = await manager
+    .getRepository(RegionEntity)
+    .findOne({ where: { slug: CANTINHO_REGION_SLUG } });
 
   if (!cantinhoRegion) {
     throw new Error(
@@ -272,7 +258,7 @@ async function resolvePricing(manager: EntityManager): Promise<Pricing> {
     );
   }
 
-  return { cantinhoRegion, planByKey };
+  return { cantinhoRegion };
 }
 
 /* ------------------------------------------------------------------ *
@@ -327,24 +313,10 @@ function buildClass(
    * vem do plano equivalente (mesmo tipo/frequência) nessa região — mesma
    * regra de ClassesService.finalize().
    */
-  const classRegionSlug =
-    locationType === LocationType.HOME
-      ? student.region.slug
-      : CANTINHO_REGION_SLUG;
   const classRegion =
     locationType === LocationType.HOME
       ? student.region
       : pricing.cantinhoRegion;
-  const classPlan = pricing.planByKey.get(
-    `${classRegionSlug}|${contract.plan.planType}|${contract.plan.frequency ?? 'null'}`,
-  );
-
-  if (billable && !classPlan) {
-    throw new Error(
-      `Plano equivalente não encontrado na região da aula (${classRegionSlug}, ` +
-        `${contract.plan.planType}, ${contract.plan.frequency ?? 'sem frequência'})`,
-    );
-  }
 
   return classRepository.create({
     studentContract: contract,
@@ -359,96 +331,13 @@ function buildClass(
     commissionAmount: billable
       ? money(Number(classRegion.classCommission) * hours)
       : null,
-    amountCharged: billable
-      ? money(Number(classPlan!.hourPrice) * hours * (1 - discount))
-      : null,
+    /* Só a avulsa é cobrada por aula; nos demais planos o aluno paga a mensalidade */
+    amountCharged:
+      billable && contract.plan.planType === PlanType.AVULSA
+        ? money(Number(contract.plan.hourPrice) * hours * (1 - discount))
+        : null,
     notes: completed && chance(0.25) ? pick(CLASS_NOTES) : null,
   });
-}
-
-/*
- * Soma o amount_charged das aulas faturáveis (completed + no_show) de um
- * contrato cujo scheduled_at cai no mês (monthKey no formato YYYY-MM) — mesma
- * regra de StudentsService.findPaymentHistory().
- */
-async function sumBillableAmount(
-  manager: EntityManager,
-  contractId: string,
-  monthKey: string,
-): Promise<string> {
-  const [year, monthNumber] = monthKey.split('-').map(Number);
-  const start = `${monthKey}-01 00:00:00`;
-  const lastDay = new Date(year, monthNumber, 0).getDate();
-  const end = `${monthKey}-${String(lastDay).padStart(2, '0')} 23:59:59`;
-
-  const result = await manager
-    .getRepository(ClassEntity)
-    .createQueryBuilder('class')
-    .where('class.student_contract_id = :contractId', { contractId })
-    .andWhere('class.status IN (:...billable)', { billable: BILLABLE_STATUSES })
-    .andWhere('class.scheduled_at BETWEEN :start AND :end', { start, end })
-    .select('COALESCE(SUM(class.amount_charged), 0)', 'amount')
-    .getRawOne<{ amount: string }>();
-
-  return money(Number(result?.amount ?? 0));
-}
-
-/*
- * O aluno não tem mensalidade fixa: payments.amount é apurado pelas aulas do
- * mês, e as novas aulas geradas aqui podem cair em competências que já têm
- * parcela lançada. Ressincroniza o amount dessas parcelas para não deixar o
- * calendário de cobrança desalinhado com o que as aulas realmente somam.
- */
-async function resyncPayments(
-  manager: EntityManager,
-  classes: ClassEntity[],
-): Promise<PaymentEntity[]> {
-  const billableKeys = new Set(
-    classes
-      .filter((item) =>
-        (BILLABLE_STATUSES as readonly ClassStatus[]).includes(item.status),
-      )
-      .map(
-        (item) => `${item.studentContract.id}|${item.scheduledAt.slice(0, 7)}`,
-      ),
-  );
-
-  if (billableKeys.size === 0) {
-    return [];
-  }
-
-  const contractIds = [
-    ...new Set(classes.map((item) => item.studentContract.id)),
-  ];
-  const paymentRepository = manager.getRepository(PaymentEntity);
-  const payments = await paymentRepository.find({
-    where: { studentContract: { id: In(contractIds) } },
-    relations: { studentContract: true },
-  });
-
-  const updated: PaymentEntity[] = [];
-
-  for (const payment of payments) {
-    const monthKey = payment.dueDate.slice(0, 7);
-    const key = `${payment.studentContract.id}|${monthKey}`;
-
-    if (!billableKeys.has(key)) {
-      continue;
-    }
-
-    payment.amount = await sumBillableAmount(
-      manager,
-      payment.studentContract.id,
-      monthKey,
-    );
-    updated.push(payment);
-  }
-
-  if (updated.length > 0) {
-    await paymentRepository.save(updated);
-  }
-
-  return updated;
 }
 
 /*
@@ -498,9 +387,7 @@ async function createClasses(ds: DataSource, options: Options): Promise<void> {
 
     await manager.getRepository(ClassEntity).save(classes, { chunk: 100 });
 
-    const resyncedPayments = await resyncPayments(manager, classes);
-
-    report(teacher, classes, options, resyncedPayments);
+    report(teacher, classes, options);
   });
 }
 
@@ -508,7 +395,6 @@ function report(
   teacher: TeacherEntity,
   classes: ClassEntity[],
   options: Options,
-  resyncedPayments: PaymentEntity[],
 ): void {
   const countBy = (status: ClassStatus) =>
     classes.filter((item) => item.status === status).length;
@@ -548,16 +434,6 @@ function report(
   console.log(`  no-show............. ${countBy(ClassStatus.NO_SHOW)}`);
   console.log(`  alunos envolvidos... ${students.size}`);
   console.log(`  comissão gerada..... R$ ${money(earnings)}`);
-
-  if (resyncedPayments.length > 0) {
-    console.log('');
-    console.log(
-      `Mensalidades ressincronizadas com as novas aulas: ${resyncedPayments.length}`,
-    );
-    for (const payment of resyncedPayments) {
-      console.log(`  ${payment.dueDate}  R$ ${payment.amount}`);
-    }
-  }
 
   console.log('');
 }

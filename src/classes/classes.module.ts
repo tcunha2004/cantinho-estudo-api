@@ -5,7 +5,7 @@ import { ClassesController } from './classes.controller';
 import { ClassEntity } from './entity/class.entity';
 import { StudentContractEntity } from '../student-contracts/entity/student-contract.entity';
 import { TeacherEntity } from '../teachers/entity/teacher.entity';
-import { PlanEntity } from '../plans/entity/plan.entity';
+import { PaymentEntity } from '../payments/entity/payment.entity';
 import { RegionEntity } from '../regions/entity/region.entity';
 
 @Module({
@@ -14,7 +14,7 @@ import { RegionEntity } from '../regions/entity/region.entity';
       ClassEntity,
       StudentContractEntity,
       TeacherEntity,
-      PlanEntity,
+      PaymentEntity,
       RegionEntity,
     ]),
   ],

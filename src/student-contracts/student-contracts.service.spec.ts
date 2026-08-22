@@ -1,5 +1,9 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { StudentContractsService } from './student-contracts.service';
+import { NotFoundException } from '@nestjs/common';
+import {
+  monthlyAmount,
+  resolveContractEndDate,
+  StudentContractsService,
+} from './student-contracts.service';
 import { ContractStatus } from './enums/contract-status.enum';
 import { ClassStatus } from '../classes/enums/class-status.enum';
 import { PlanType } from '../plans/enums/plan-type.enum';
@@ -26,23 +30,47 @@ function makeService() {
     update: jest.fn(),
     findOne: jest.fn(),
     create: jest.fn((data: unknown) => data),
-    save: jest.fn((data: Record<string, unknown>) => ({
-      ...data,
-      id: 'novo-contrato',
-    })),
+    save: jest.fn((data: Record<string, unknown>) =>
+      Promise.resolve({ ...data, id: 'novo-contrato' }),
+    ),
     createQueryBuilder: jest.fn(),
   };
   const classRepository = { update: jest.fn() };
-  const paymentRepository = { findOne: jest.fn() };
+  const paymentRepository = {
+    findOne: jest.fn(),
+    create: jest.fn((data: unknown) => data),
+    save: jest.fn((data: unknown) => Promise.resolve(data)),
+  };
+  const planRepository = { findOne: jest.fn() };
 
   const service = new StudentContractsService(
     contractRepository as never,
     classRepository as never,
     paymentRepository as never,
+    planRepository as never,
   );
 
-  return { service, contractRepository, classRepository, paymentRepository };
+  return {
+    service,
+    contractRepository,
+    classRepository,
+    paymentRepository,
+    planRepository,
+  };
 }
+
+const ouro = {
+  id: 'p2',
+  planType: PlanType.OURO,
+  monthlyPrice: '1860.00',
+  validityMonths: null,
+};
+const bronze = {
+  id: 'p-bronze',
+  planType: PlanType.BRONZE,
+  monthlyPrice: '2000.00',
+  validityMonths: 2,
+};
 
 describe('StudentContractsService', () => {
   describe('update', () => {
@@ -68,28 +96,6 @@ describe('StudentContractsService', () => {
         { studentContract: { id: 'c1' }, status: ClassStatus.SCHEDULED },
         { status: ClassStatus.CANCELLED },
       );
-    });
-  });
-
-  describe('hasOpenPayment', () => {
-    it('true quando existe parcela pending', async () => {
-      const { service, paymentRepository } = makeService();
-      paymentRepository.findOne.mockResolvedValue({ id: 'pay1' });
-
-      await expect(service.hasOpenPayment('c1')).resolves.toBe(true);
-      expect(paymentRepository.findOne).toHaveBeenCalledWith({
-        where: {
-          studentContract: { id: 'c1' },
-          status: PaymentStatus.PENDING,
-        },
-      });
-    });
-
-    it('false quando não há parcela pending', async () => {
-      const { service, paymentRepository } = makeService();
-      paymentRepository.findOne.mockResolvedValue(null);
-
-      await expect(service.hasOpenPayment('c1')).resolves.toBe(false);
     });
   });
 
@@ -137,89 +143,31 @@ describe('StudentContractsService', () => {
       expect(contractRepository.save).not.toHaveBeenCalled();
     });
 
-    it('efetiva a troca sem passar pelo guard de parcela em aberto', async () => {
-      const {
-        service,
-        contractRepository,
-        classRepository,
-        paymentRepository,
-      } = makeService();
+    it('lança 404 quando o plano alvo não existe', async () => {
+      const { service, contractRepository, planRepository } = makeService();
+      contractRepository.findOne.mockResolvedValue({
+        id: 'c1',
+        student: { id: 's1' },
+        pendingPlan: { id: 'sumiu' },
+        pendingDiscountPercentage: null,
+      });
+      planRepository.findOne.mockResolvedValue(null);
+
+      await expect(service.applyPendingPlanChange('c1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('cria o substituto vigente até dezembro, migra as aulas e fecha o antigo nessa ordem', async () => {
+      const { service, contractRepository, classRepository, planRepository } =
+        makeService();
       contractRepository.findOne.mockResolvedValue({
         id: 'c1',
         student: { id: 's1' },
         pendingPlan: { id: 'p2' },
         pendingDiscountPercentage: '15.00',
       });
-      /* Mesmo que ainda exista parcela pending (ela só será marcada como paga
-       * depois que este método rodar), a troca não deve ser bloqueada. */
-      paymentRepository.findOne.mockResolvedValue({
-        id: 'pay1',
-        status: PaymentStatus.PENDING,
-      });
-
-      const created = await service.applyPendingPlanChange('c1');
-
-      expect(created?.id).toBe('novo-contrato');
-      expect(contractRepository.create).toHaveBeenCalledWith({
-        student: { id: 's1' },
-        plan: { id: 'p2' },
-        discountPercentage: '15.00',
-        startDate: todayNaive(),
-        status: ContractStatus.ACTIVE,
-      });
-      expect(classRepository.update).toHaveBeenCalledWith(
-        { studentContract: { id: 'c1' }, status: ClassStatus.SCHEDULED },
-        { studentContract: { id: 'novo-contrato' } },
-      );
-      expect(contractRepository.update).toHaveBeenCalledWith('c1', {
-        status: ContractStatus.CANCELLED,
-        endDate: todayNaive(),
-        pendingPlan: null,
-        pendingDiscountPercentage: null,
-      });
-    });
-  });
-
-  describe('replace', () => {
-    it('lança 404 quando o contrato antigo não existe', async () => {
-      const { service, contractRepository } = makeService();
-      contractRepository.findOne.mockResolvedValue(null);
-
-      await expect(
-        service.replace('c1', { planId: 'p2', discountPercentage: null }),
-      ).rejects.toThrow(NotFoundException);
-    });
-
-    it('bloqueia a troca quando há parcela em aberto', async () => {
-      const { service, contractRepository, paymentRepository } = makeService();
-      contractRepository.findOne.mockResolvedValue({
-        id: 'c1',
-        student: { id: 's1' },
-      });
-      paymentRepository.findOne.mockResolvedValue({
-        id: 'pay1',
-        status: PaymentStatus.PENDING,
-      });
-
-      await expect(
-        service.replace('c1', { planId: 'p2', discountPercentage: null }),
-      ).rejects.toThrow(BadRequestException);
-
-      expect(contractRepository.save).not.toHaveBeenCalled();
-    });
-
-    it('cria o substituto, migra as aulas agendadas e fecha o antigo nessa ordem', async () => {
-      const {
-        service,
-        contractRepository,
-        classRepository,
-        paymentRepository,
-      } = makeService();
-      contractRepository.findOne.mockResolvedValue({
-        id: 'c1',
-        student: { id: 's1' },
-      });
-      paymentRepository.findOne.mockResolvedValue(null);
+      planRepository.findOne.mockResolvedValue(ouro);
 
       const order: string[] = [];
       contractRepository.save.mockImplementation((data: object) => {
@@ -235,20 +183,18 @@ describe('StudentContractsService', () => {
         return Promise.resolve(undefined);
       });
 
-      const created = await service.replace('c1', {
-        planId: 'p2',
-        discountPercentage: '15.00',
-      });
+      const created = await service.applyPendingPlanChange('c1');
 
-      expect(created.id).toBe('c2');
+      expect(created?.id).toBe('c2');
       /* A ordem é a regra: migrar antes de fechar, senão a cascata de
        * cancelamento apagaria as aulas agendadas. */
       expect(order).toEqual(['save-novo', 'migra-aulas', 'fecha-antigo']);
       expect(contractRepository.create).toHaveBeenCalledWith({
         student: { id: 's1' },
-        plan: { id: 'p2' },
+        plan: ouro,
         discountPercentage: '15.00',
         startDate: todayNaive(),
+        endDate: `${todayNaive().slice(0, 4)}-12-31`,
         status: ContractStatus.ACTIVE,
       });
       expect(classRepository.update).toHaveBeenCalledWith(
@@ -261,6 +207,87 @@ describe('StudentContractsService', () => {
         pendingPlan: null,
         pendingDiscountPercentage: null,
       });
+    });
+
+    it('plano mensal começa a pagar no mês seguinte — o mês da troca ficou no contrato antigo', async () => {
+      const { service, contractRepository, paymentRepository, planRepository } =
+        makeService();
+      contractRepository.findOne.mockResolvedValue({
+        id: 'c1',
+        student: { id: 's1' },
+        pendingPlan: { id: 'p2' },
+        pendingDiscountPercentage: '15.00',
+      });
+      planRepository.findOne.mockResolvedValue(ouro);
+      contractRepository.save.mockImplementation((data: object) =>
+        Promise.resolve({ ...data, id: 'c2' }),
+      );
+
+      await service.applyPendingPlanChange('c1');
+
+      const [[parcela]] = paymentRepository.create.mock.calls as [
+        [Record<string, unknown>],
+      ];
+      /* 1860 − 15% */
+      expect(parcela.amount).toBe('1581.00');
+      expect(parcela.status).toBe(PaymentStatus.PENDING);
+      const [year, month] = todayNaive().split('-').map(Number);
+      const proximo =
+        month === 12
+          ? `${year + 1}-01`
+          : `${year}-${String(month + 1).padStart(2, '0')}`;
+      expect(parcela.dueDate).toBe(`${proximo}-10`);
+    });
+
+    it('Bronze é pacote: parcela única já no mês da contratação', async () => {
+      const { service, contractRepository, paymentRepository, planRepository } =
+        makeService();
+      contractRepository.findOne.mockResolvedValue({
+        id: 'c1',
+        student: { id: 's1' },
+        pendingPlan: { id: 'p-bronze' },
+        pendingDiscountPercentage: null,
+      });
+      planRepository.findOne.mockResolvedValue(bronze);
+      contractRepository.save.mockImplementation((data: object) =>
+        Promise.resolve({ ...data, id: 'c2' }),
+      );
+
+      await service.applyPendingPlanChange('c1');
+
+      const [[parcela]] = paymentRepository.create.mock.calls as [
+        [Record<string, unknown>],
+      ];
+      expect(parcela.amount).toBe('2000.00');
+      expect(parcela.dueDate).toBe(`${todayNaive().slice(0, 7)}-10`);
+    });
+  });
+
+  describe('vigência e mensalidade', () => {
+    it('Bronze vale pela validade em meses; Ouro e Prata, até dezembro; avulsa não vence', () => {
+      expect(resolveContractEndDate(bronze as never, '2026-05-01')).toBe(
+        '2026-07-01',
+      );
+      expect(resolveContractEndDate(ouro as never, '2026-05-01')).toBe(
+        '2026-12-31',
+      );
+      expect(
+        resolveContractEndDate(
+          { planType: PlanType.AVULSA, validityMonths: null } as never,
+          '2026-05-01',
+        ),
+      ).toBeNull();
+    });
+
+    it('mensalidade é o preço do plano com o desconto; avulsa não tem mensalidade', () => {
+      expect(monthlyAmount(ouro as never, null)).toBe('1860.00');
+      expect(monthlyAmount(ouro as never, '10.00')).toBe('1674.00');
+      expect(
+        monthlyAmount(
+          { planType: PlanType.AVULSA, monthlyPrice: '220.00' } as never,
+          null,
+        ),
+      ).toBe('0.00');
     });
   });
 

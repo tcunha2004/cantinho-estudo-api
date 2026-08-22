@@ -469,12 +469,13 @@ async function seed(ds: DataSource): Promise<void> {
   const contractStart = new Date();
   contractStart.setDate(1);
 
+  /* Ouro e Prata vigoram até dezembro do ano em que começam */
   const contract = await contractRepository.save(
     contractRepository.create({
       student,
       plan: ouroPlan,
       startDate: toDateString(contractStart),
-      endDate: null,
+      endDate: `${contractStart.getFullYear()}-12-31`,
       discountPercentage: null,
       status: ContractStatus.ACTIVE,
     }),
@@ -482,16 +483,14 @@ async function seed(ds: DataSource): Promise<void> {
 
   /*
    * Uma mensalidade em aberto para o mês corrente — sem ela a tela financeira
-   * do aluno nasce vazia. O valor real de cada parcela é apurado pelas aulas
-   * do mês (StudentsService.findPaymentHistory()), não pela coluna
-   * `payments.amount`; como o aluno ainda não tem aulas, ela nasce em 0 —
-   * mesma regra do contract:create.
+   * do aluno nasce vazia. O valor é a mensalidade do plano, fixa: o aluno paga
+   * o plano, não as aulas que fez.
    */
   const paymentRepository = ds.getRepository(PaymentEntity);
   await paymentRepository.save(
     paymentRepository.create({
       studentContract: contract,
-      amount: money(0),
+      amount: ouroPlan.monthlyPrice,
       dueDate: toDateString(
         new Date(
           contractStart.getFullYear(),

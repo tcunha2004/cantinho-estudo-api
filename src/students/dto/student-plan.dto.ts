@@ -9,10 +9,10 @@ export class StudentPlanDto {
   /* Dados do plano contratado */
   planType: PlanType;
   frequency: Frequency | null;
-  /* Hora/aula do plano equivalente na região do aluno */
+  /* Mensalidade do plano, já com o desconto do contrato — o que o aluno paga */
+  monthlyPrice: string;
+  /* Hora/aula do plano: preço real na avulsa, referência nos demais */
   hourPrice: string;
-  /* Hora/aula do plano equivalente no Cantinho do Estudo (igual a hourPrice se o aluno já for de lá) */
-  cantinhoHourPrice: string;
   /* Quantidade de aulas no mês */
   classesCount: number | null;
   /* Validade do pacote em meses */

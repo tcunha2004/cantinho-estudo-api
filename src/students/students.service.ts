@@ -4,14 +4,18 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { FindOptionsRelations, IsNull, Repository } from 'typeorm';
+import { FindOptionsRelations, Repository } from 'typeorm';
 import { StudentEntity } from './entity/student.entity';
 import { StudentContractEntity } from '../student-contracts/entity/student-contract.entity';
-import { StudentContractsService } from '../student-contracts/student-contracts.service';
+import {
+  monthlyAmount,
+  StudentContractsService,
+} from '../student-contracts/student-contracts.service';
 import { ContractStatus } from '../student-contracts/enums/contract-status.enum';
 import { GuardianEntity } from '../guardians/entity/guardian.entity';
 import { GuardiansService } from '../guardians/guardians.service';
 import { PlanEntity } from '../plans/entity/plan.entity';
+import { PlanType } from '../plans/enums/plan-type.enum';
 import { PaymentEntity } from '../payments/entity/payment.entity';
 import { PaymentStatus } from '../payments/enums/payment-status.enum';
 import { ClassEntity } from '../classes/entity/class.entity';
@@ -29,12 +33,6 @@ import { PaymentHistoryDto } from './dto/payment-history.dto';
 import { StudentDetailDto } from './dto/student-detail.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
-
-/*
- * Aula no Cantinho sempre usa a tabela desta região, não a do bairro do aluno
- * — mesma constante usada em ClassesService.
- */
-const CANTINHO_REGION_SLUG = 'cantinho';
 
 /* Valor monetário como o banco guarda: decimal(10,2) em string. */
 function money(value: number): string {
@@ -277,23 +275,15 @@ export class StudentsService {
         };
 
         /*
-         * Com parcela em aberto, replace() recusaria a troca — em vez de
-         * propagar o 400, a troca fica agendada e só se efetiva quando essa
-         * parcela for paga (StudentsService.updatePayment()).
+         * A troca nunca é imediata: fica agendada e só se efetiva quando o
+         * admin confirmar o pagamento da mensalidade do mês
+         * (StudentsService.updatePayment()). Assim o mês em que a troca foi
+         * pedida é sempre cobrado pelo plano antigo.
          */
-        if (
-          await this.studentContractsService.hasOpenPayment(currentContract.id)
-        ) {
-          await this.studentContractsService.schedulePlanChange(
-            currentContract.id,
-            targetPlan,
-          );
-        } else {
-          await this.studentContractsService.replace(
-            currentContract.id,
-            targetPlan,
-          );
-        }
+        await this.studentContractsService.schedulePlanChange(
+          currentContract.id,
+          targetPlan,
+        );
       } else if (currentContract.pendingPlan) {
         /*
          * Plano/desconto enviados batem com o que já está no contrato: o
@@ -324,10 +314,9 @@ export class StudentsService {
    * Plano do aluno autenticado (userId = sub do token): retorna todos os dados
    * do plano do contrato mais recente do aluno (tipo, preços, frequência,
    * região, ...) junto com o contexto do contrato (status, vigência e desconto
-   * aplicado). A hora/aula do Cantinho do Estudo vem do plano equivalente
-   * (mesmo tipo/frequência) naquela região — mesma regra usada para congelar o
-   * valor das aulas. Lança 404 se o aluno não existir ou não tiver nenhum
-   * contrato.
+   * aplicado). O que o aluno paga é a mensalidade do plano contratado —
+   * hourPrice acompanha como referência, e é o preço real só na avulsa. Lança
+   * 404 se o aluno não existir ou não tiver nenhum contrato.
    */
   public async findStudentPlan(userId: string): Promise<StudentPlanDto> {
     const student = await this.findStudentByUserId(userId, {
@@ -343,30 +332,13 @@ export class StudentsService {
 
     const { plan } = contract;
 
-    const cantinhoPlan =
-      plan.region.slug === CANTINHO_REGION_SLUG
-        ? plan
-        : await this.planRepository.findOne({
-            where: {
-              region: { slug: CANTINHO_REGION_SLUG },
-              planType: plan.planType,
-              frequency: plan.frequency ?? IsNull(),
-            },
-          });
-
-    if (!cantinhoPlan) {
-      throw new NotFoundException(
-        'Plano equivalente não encontrado no Cantinho do Estudo',
-      );
-    }
-
     return {
       studentId: student.id,
       studentName: student.user.name,
       planType: plan.planType,
       frequency: plan.frequency,
+      monthlyPrice: monthlyAmount(plan, contract.discountPercentage),
       hourPrice: plan.hourPrice,
-      cantinhoHourPrice: cantinhoPlan.hourPrice,
       classesCount: plan.classesCount,
       validityMonths: plan.validityMonths,
       region: plan.region.name,
@@ -382,7 +354,7 @@ export class StudentsService {
    * Outros planos disponíveis para o aluno autenticado: os principais dados dos
    * planos da região do aluno, exceto o plano do seu contrato atual. Se o aluno
    * não tiver contrato, retorna todos os planos da região. Ordenados pela
-   * hora/aula (crescente) — não há mensalidade fixa a ordenar.
+   * mensalidade (crescente), que é o que o aluno de fato paga.
    */
   public async findOtherPlans(userId: string): Promise<PlanSummaryDto[]> {
     const student = await this.findStudentByUserId(userId, {
@@ -394,7 +366,7 @@ export class StudentsService {
 
     const plans = await this.planRepository.find({
       where: { region: { id: student.region.id } },
-      order: { hourPrice: 'ASC' },
+      order: { monthlyPrice: 'ASC' },
     });
 
     return plans
@@ -402,6 +374,7 @@ export class StudentsService {
       .map((plan) => ({
         planType: plan.planType,
         frequency: plan.frequency,
+        monthlyPrice: plan.monthlyPrice,
         hourPrice: plan.hourPrice,
         classesCount: plan.classesCount,
         validityMonths: plan.validityMonths,
@@ -412,11 +385,8 @@ export class StudentsService {
    * Histórico de pagamentos do aluno autenticado (userId = sub do token):
    * todas as parcelas de todos os contratos do aluno, com vencimento, data de
    * pagamento e status, junto com o tipo do plano do contrato de cada parcela.
-   * O valor de cada parcela não vem da coluna `payments.amount` — é apurado na
-   * leitura, somando o `amount_charged` (congelado) das aulas faturáveis
-   * (`completed` + `no_show`) do contrato cujo `scheduled_at` cai no mês do
-   * vencimento. Ordenado pelo vencimento (mais recente primeiro). Lança 404 se
-   * o aluno não existir.
+   * Ordenado pelo vencimento (mais recente primeiro). Lança 404 se o aluno não
+   * existir. Sobre de onde sai o valor de cada parcela, ver toPaymentDto.
    */
   public async findPaymentHistory(
     userId: string,
@@ -497,20 +467,32 @@ export class StudentsService {
 
   /*
    * Parcela do mês seguinte, no dia equivalente ao vencimento pago (ver
-   * addMonthsToDate). Sem valor a apurar ainda — mesma convenção dos seeds: o
-   * valor exibido vem das aulas do mês, a coluna `amount` nasce zerada. Não
-   * cria em contrato já cancelado, nem duplica um vencimento que já exista
-   * (a geração mensal recorrente pode ter criado essa parcela antes).
+   * addMonthsToDate), já com a mensalidade do plano. Não cria em contrato
+   * cancelado, nem duplica um vencimento que já exista — o contrato recém
+   * trocado pode ter nascido com essa mesma parcela
+   * (StudentContractsService.createFirstPayment).
+   *
+   * O calendário para no fim do contrato: o Ouro e o Prata vão até dezembro, e
+   * o Bronze é um pacote de parcela única — pago o pacote, não há próxima.
+   *
+   * Precisa de `contract.plan` carregado.
    */
   private async createNextPayment(
     contract: StudentContractEntity,
     paidDueDate: string,
   ): Promise<void> {
-    if (contract.status === ContractStatus.CANCELLED) {
+    if (
+      contract.status === ContractStatus.CANCELLED ||
+      contract.plan.planType === PlanType.BRONZE
+    ) {
       return;
     }
 
     const nextDueDate = addMonthsToDate(paidDueDate, 1);
+
+    if (contract.endDate && nextDueDate > contract.endDate) {
+      return;
+    }
 
     const existing = await this.paymentRepository.findOne({
       where: { studentContract: { id: contract.id }, dueDate: nextDueDate },
@@ -523,7 +505,7 @@ export class StudentsService {
     await this.paymentRepository.save(
       this.paymentRepository.create({
         studentContract: contract,
-        amount: money(0),
+        amount: monthlyAmount(contract.plan, contract.discountPercentage),
         dueDate: nextDueDate,
         paidAt: null,
         status: PaymentStatus.PENDING,
@@ -531,10 +513,22 @@ export class StudentsService {
     );
   }
 
-  /* Precisa de `studentContract.plan` carregado. */
+  /*
+   * Precisa de `studentContract.plan` carregado.
+   *
+   * O valor da parcela é a mensalidade congelada em `payments.amount` quando
+   * ela foi gerada — o aluno paga o plano, não as aulas. A avulsa é a exceção:
+   * não tem mensalidade, então o valor é apurado aqui somando as aulas
+   * faturáveis do mês. Apurar na leitura (em vez de somar na parcela ao
+   * encerrar a aula) é o que faz `ClassesService.reopen()` se acertar sozinho.
+   *
+   * `classesCount` vale para os dois casos, mas é informativo nos planos
+   * mensais: diz quantas aulas o aluno usou, não o que ele deve.
+   */
   private async toPaymentDto(
     payment: PaymentEntity,
   ): Promise<PaymentHistoryDto> {
+    const { plan } = payment.studentContract;
     const { amount, classesCount } = await this.sumBillableClasses(
       payment.studentContract.id,
       payment.dueDate,
@@ -543,7 +537,10 @@ export class StudentsService {
     return {
       id: payment.id,
       contractId: payment.studentContract.id,
-      amount,
+      amount:
+        plan.planType === PlanType.AVULSA
+          ? amount
+          : money(Number(payment.amount)),
       dueDate: payment.dueDate,
       paidAt: payment.paidAt,
       status: payment.status,
@@ -554,9 +551,9 @@ export class StudentsService {
 
   /*
    * Soma o valor cobrado (amount_charged) e conta as aulas faturáveis de um
-   * contrato cujo scheduled_at cai no mês da competência (dueDate). É a mesma
-   * base usada pela receita do admin (ClassesService.sumRevenue) — cobrança do
-   * aluno e receita olham para o mesmo conjunto de aulas.
+   * contrato cujo scheduled_at cai no mês da competência (dueDate). A soma só
+   * tem valor na avulsa — nos planos mensais o amount_charged é nulo, porque a
+   * aula não é cobrada; ali o que importa é a contagem.
    */
   private async sumBillableClasses(
     contractId: string,
