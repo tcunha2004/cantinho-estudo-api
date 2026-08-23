@@ -11,7 +11,6 @@ import {
   FindOptionsRelations,
   FindOptionsWhere,
   In,
-  LessThan,
   MoreThan,
   Not,
   Repository,
@@ -294,16 +293,22 @@ export class ClassesService {
   }
 
   /*
-   * Histórico recente de um professor: as 5 aulas mais recentes cujo
-   * scheduled_at já passou, ordenadas da mais recente para a mais antiga.
+   * Histórico de um professor no mês (month no formato YYYY-MM): as aulas cujo
+   * scheduled_at já passou, da mais recente para a mais antiga. O fim do
+   * intervalo é limitado a agora, senão o mês corrente traria aula futura.
    * Independe do status — cada aula carrega o seu (completed, cancelled, ...).
    */
   public async getRecentHistoryByTeacher(
     userId: string,
+    month: string,
   ): Promise<ClassEntity[]> {
+    const [year, monthNumber] = month.split('-').map(Number);
+    const { start, end } = getMonthRange(year, monthNumber);
+    const now = nowNaive();
+
     return await this.classRepository.find({
       where: {
-        scheduledAt: LessThan(nowNaive()),
+        scheduledAt: Between(start, end < now ? end : now),
         teacher: { user: { id: userId } },
       },
       relations: {
@@ -312,7 +317,6 @@ export class ClassesService {
         subject: true,
       },
       order: { scheduledAt: 'DESC' },
-      take: 5,
     });
   }
 

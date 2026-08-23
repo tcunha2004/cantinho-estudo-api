@@ -1042,6 +1042,27 @@ describe('ClassesService', () => {
       expect(JSON.stringify(where)).toContain('2026-02-28T23:59:59');
     });
 
+    it('histórico do mês corrente para em agora; mês passado pega o mês inteiro', async () => {
+      const { service, classRepository } = makeService();
+      classRepository.find.mockResolvedValue([]);
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T20:00:00.000Z'));
+
+      await service.getRecentHistoryByTeacher('user-prof', '2026-08');
+      const corrente = JSON.stringify(
+        classRepository.find.mock.calls[0][0].where,
+      );
+      expect(corrente).toContain('2026-08-01T00:00:00');
+      /* 20:00 UTC = 17:00 em São Paulo: o intervalo para aí, não no dia 31. */
+      expect(corrente).toContain('2026-08-10T17:00:00');
+
+      await service.getRecentHistoryByTeacher('user-prof', '2026-07');
+      const passado = JSON.stringify(
+        classRepository.find.mock.calls[1][0].where,
+      );
+      expect(passado).toContain('2026-07-01T00:00:00');
+      expect(passado).toContain('2026-07-31T23:59:59');
+    });
+
     it('distribui as aulas nas semanas do mês e devolve null nas vazias', async () => {
       const { service, classRepository } = makeService();
       classRepository.createQueryBuilder.mockReturnValue(

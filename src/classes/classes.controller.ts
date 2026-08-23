@@ -51,9 +51,11 @@ export class ClassesController {
   @Get('teacher/recent-history')
   public async getRecentHistoryByTeacher(
     @Req() request: RequestWithUser,
+    @Query() query: MonthQueryDto,
   ): Promise<ClassEntity[]> {
     return await this.classesService.getRecentHistoryByTeacher(
       request.user.sub,
+      query.month,
     );
   }
 
