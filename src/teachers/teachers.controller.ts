@@ -6,6 +6,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { TeachersService } from './teachers.service';
@@ -14,6 +15,7 @@ import { TeachersEarningsSummaryDto } from './dto/teachers-earnings-summary.dto'
 import { TeacherDetailDto } from './dto/teacher-detail.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
 import { AuthGuard } from 'src/auth/guard/auth.guard';
+import type { RequestWithUser } from 'src/auth/guard/auth.guard';
 import { RolesGuard } from 'src/auth/guard/roles.guard';
 import { Roles } from 'src/auth/decorator/roles.decorator';
 
@@ -39,6 +41,17 @@ export class TeachersController {
   public async countActive(): Promise<{ count: number }> {
     const count = await this.teachersService.countActive();
     return { count };
+  }
+
+  /* Antes do `:id`: o ParseUUIDPipe rejeitaria "me" antes de chegar aqui. */
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('professor')
+  @Get('me/active')
+  public async isActive(
+    @Req() req: RequestWithUser,
+  ): Promise<{ active: boolean }> {
+    const active = await this.teachersService.isActiveByUserId(req.user.sub);
+    return { active };
   }
 
   @UseGuards(AuthGuard, RolesGuard)

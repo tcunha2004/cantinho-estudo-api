@@ -184,6 +184,7 @@ describe('TeachersService', () => {
           {
             id: 't1',
             name: 'Ana Paula',
+            active: true,
             subject: 'Física, Química',
             completedClasses: '8',
             amountToReceive: '320.00',
@@ -191,6 +192,7 @@ describe('TeachersService', () => {
           {
             id: 't2',
             name: 'Renata Lima',
+            active: false,
             subject: null,
             completedClasses: '0',
             amountToReceive: '0',
@@ -205,6 +207,7 @@ describe('TeachersService', () => {
       expect(summary.teachers[0]).toEqual({
         id: 't1',
         name: 'Ana Paula',
+        active: true,
         subject: 'Física, Química',
         completedClasses: 8,
         amountToReceive: 320,
@@ -217,14 +220,26 @@ describe('TeachersService', () => {
       });
     });
 
-    it('considera apenas professores ativos', async () => {
+    it('inativo entra na lista marcado e conta nos totais', async () => {
       const { service, teacherRepository } = makeService();
-      const builder = fakeQueryBuilder([]);
+      const builder = fakeQueryBuilder([
+        {
+          id: 't1',
+          name: 'Ana Paula',
+          active: false,
+          subject: 'Física',
+          completedClasses: '3',
+          amountToReceive: '120.00',
+        },
+      ]);
       teacherRepository.createQueryBuilder.mockReturnValue(builder);
 
-      await service.getAllTeachersEarningsByMonth('2026-08');
+      const summary = await service.getAllTeachersEarningsByMonth('2026-08');
 
-      expect(builder.calls).toContain('teacher.active = true');
+      /* Inativado no meio do mês ainda recebe pelas aulas que deu. */
+      expect(summary.teachers[0].active).toBe(false);
+      expect(summary.totalAmountToReceive).toBe(120);
+      expect(builder.calls).not.toContain('teacher.active = true');
     });
 
     it('filtra pelo mês pedido, não pelo mês corrente', async () => {

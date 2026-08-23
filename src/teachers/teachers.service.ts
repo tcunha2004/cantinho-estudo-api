@@ -25,6 +25,21 @@ export class TeachersService {
     return await this.teacherRepository.count({ where: { active: true } });
   }
 
+  /* O professor logado está ativo? A agenda do professor bloqueia quando não. */
+  public async isActiveByUserId(userId: string): Promise<boolean> {
+    /* Sem `select`: o join com users faz o TypeORM paginar por distinctAlias,
+     * que precisa da chave primária selecionada. */
+    const teacher = await this.teacherRepository.findOne({
+      where: { user: { id: userId } },
+    });
+
+    if (!teacher) {
+      throw new NotFoundException('Professor não encontrado');
+    }
+
+    return teacher.active;
+  }
+
   /* Dados completos de um professor para o modal de visualização/edição do admin. */
   public async findById(id: string): Promise<TeacherDetailDto> {
     const teacher = await this.teacherRepository.findOne({
@@ -103,7 +118,9 @@ export class TeachersService {
    * professor, conta as aulas faturáveis (BILLABLE_STATUSES: realizadas e
    * faltas) cujo scheduled_at está dentro do mês e soma as comissões
    * congeladas (commission_amount) dessas aulas. Professores sem aulas
-   * faturáveis aparecem com 0. Cada professor traz também suas disciplinas e
+   * faturáveis aparecem com 0. Inativos vêm na lista marcados como tal — quem
+   * foi inativado no meio do mês ainda recebe pelas aulas que deu, então entra
+   * também nos totais; filtrar por status é decisão da tela. Cada professor traz também suas disciplinas e
    * o valor por aula do mês. Também retorna os totais gerais (aulas e valor a
    * pagar) somando todos os professores.
    */
@@ -115,7 +132,6 @@ export class TeachersService {
 
     const rows = await this.teacherRepository
       .createQueryBuilder('teacher')
-      .where('teacher.active = true')
       .leftJoin('teacher.user', 'user')
       .leftJoin(
         'teacher.classes',
@@ -125,6 +141,7 @@ export class TeachersService {
       )
       .select('teacher.id', 'id')
       .addSelect('user.name', 'name')
+      .addSelect('teacher.active', 'active')
       /*
        * Subconsulta em vez de join: as disciplinas são N:N e um join
        * multiplicaria as linhas, inflando a contagem de aulas e a soma das
@@ -146,6 +163,7 @@ export class TeachersService {
       .getRawMany<{
         id: string;
         name: string;
+        active: boolean;
         subject: string | null;
         completedClasses: string;
         amountToReceive: string;
@@ -154,6 +172,7 @@ export class TeachersService {
     const teachers = rows.map((row) => ({
       id: row.id,
       name: row.name,
+      active: row.active,
       subject: row.subject ?? '',
       completedClasses: Number(row.completedClasses),
       amountToReceive: Number(row.amountToReceive),

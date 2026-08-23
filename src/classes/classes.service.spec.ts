@@ -300,6 +300,10 @@ describe('ClassesService', () => {
         { id: 'sub1', name: 'Matemática' },
       ]);
       expect(options.subjects).toEqual([]);
+      /* Professor inativo não pode receber aula nova, então nem aparece. */
+      expect(teacherRepository.find).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { active: true } }),
+      );
     });
 
     it('aluno com dois contratos ativos aparece uma vez só', async () => {
@@ -338,6 +342,35 @@ describe('ClassesService', () => {
         service.create(professor, {
           studentId: 's1',
           teacherId: 'outro',
+          subjectId: 'sub1',
+          scheduledAt: '2026-08-10T14:00',
+          locationType: LocationType.SCHOOL,
+        }),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('professor inativo não agenda para si', async () => {
+      const { service, teacherRepository } = makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher({ active: false }));
+
+      await expect(
+        service.create(professor, {
+          studentId: 's1',
+          subjectId: 'sub1',
+          scheduledAt: '2026-08-10T14:00',
+          locationType: LocationType.SCHOOL,
+        }),
+      ).rejects.toThrow('Professor inativo não pode ter aulas agendadas');
+    });
+
+    it('admin também não agenda para professor inativo', async () => {
+      const { service, teacherRepository } = makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher({ active: false }));
+
+      await expect(
+        service.create(admin, {
+          studentId: 's1',
+          teacherId: 't1',
           subjectId: 'sub1',
           scheduledAt: '2026-08-10T14:00',
           locationType: LocationType.SCHOOL,

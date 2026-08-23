@@ -367,9 +367,9 @@ export class ClassesService {
 
   /*
    * Opções dos selects do formulário de aula, já escopadas pelo papel: o admin
-   * escolhe o professor (e recebe as matérias de cada um junto, evitando uma
-   * segunda requisição ao trocar de professor); o professor recebe apenas as
-   * matérias que leciona. Alunos não chegam aqui — a rota é bloqueada.
+   * escolhe entre os professores ativos (e recebe as matérias de cada um junto,
+   * evitando uma segunda requisição ao trocar de professor); o professor recebe
+   * apenas as matérias que leciona. Alunos não chegam aqui — a rota é bloqueada.
    */
   public async findFormOptions(
     user: UserPayload,
@@ -387,6 +387,7 @@ export class ClassesService {
     }
 
     const teachers = await this.teacherRepository.find({
+      where: { active: true },
       relations: { user: true, subjects: true },
     });
 
@@ -419,6 +420,7 @@ export class ClassesService {
     dto: CreateClassDto,
   ): Promise<ClassDetailDto> {
     const teacher = await this.resolveTeacher(user, dto.teacherId);
+    this.assertTeacherActive(teacher);
     this.assertTeacherTeachesSubject(teacher, dto.subjectId);
 
     const scheduledAt = toNaiveTimestamp(dto.scheduledAt);
@@ -486,6 +488,7 @@ export class ClassesService {
       : await this.findTeacherById(item.teacher.id);
 
     const subjectId = dto.subjectId ?? item.subject.id;
+    this.assertTeacherActive(teacher);
     this.assertTeacherTeachesSubject(teacher, subjectId);
 
     const contract = dto.studentId
@@ -748,6 +751,19 @@ export class ClassesService {
     }
 
     return teacher;
+  }
+
+  /*
+   * Professor inativo não dá aula nova — nem agendando para si, nem o admin
+   * agendando para ele. A checagem fica em `create` e `update`, os dois únicos
+   * caminhos que gravam `class.teacher`, para a regra não depender da tela.
+   */
+  private assertTeacherActive(teacher: TeacherEntity): void {
+    if (!teacher.active) {
+      throw new ForbiddenException(
+        'Professor inativo não pode ter aulas agendadas',
+      );
+    }
   }
 
   /*
