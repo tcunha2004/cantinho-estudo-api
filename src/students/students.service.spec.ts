@@ -38,7 +38,6 @@ function makeService(overrides: Record<string, unknown> = {}) {
     findOne: jest.fn(),
     update: jest.fn(),
   };
-  const planRepository = { find: jest.fn(), findOne: jest.fn() };
   const paymentRepository = {
     find: jest.fn(),
     findOne: jest.fn(),
@@ -57,7 +56,6 @@ function makeService(overrides: Record<string, unknown> = {}) {
 
   const service = new StudentsService(
     studentRepository as never,
-    planRepository as never,
     paymentRepository as never,
     classRepository as never,
     userRepository as never,
@@ -68,7 +66,6 @@ function makeService(overrides: Record<string, unknown> = {}) {
   return {
     service,
     studentRepository,
-    planRepository,
     paymentRepository,
     classRepository,
     userRepository,
@@ -490,7 +487,7 @@ describe('StudentsService', () => {
 
   describe('findStudentPlan', () => {
     it('devolve a mensalidade do plano contratado, já com o desconto', async () => {
-      const { service, studentRepository, planRepository } = makeService();
+      const { service, studentRepository } = makeService();
       studentRepository.findOne.mockResolvedValue(
         makeStudent({
           region: vila,
@@ -517,8 +514,6 @@ describe('StudentsService', () => {
         discountPercentage: '10.00',
         contractStatus: ContractStatus.ACTIVE,
       });
-      /* Não existe mais plano equivalente de outra região a consultar. */
-      expect(planRepository.findOne).not.toHaveBeenCalled();
     });
 
     it('mostra o plano do contrato vigente, não do cancelado no mesmo dia', async () => {
@@ -558,35 +553,6 @@ describe('StudentsService', () => {
       await expect(service.findStudentPlan('u1')).rejects.toThrow(
         NotFoundException,
       );
-    });
-  });
-
-  describe('findOtherPlans', () => {
-    it('exclui o plano do contrato atual', async () => {
-      const { service, studentRepository, planRepository } = makeService();
-      studentRepository.findOne.mockResolvedValue(makeStudent());
-      planRepository.find.mockResolvedValue([
-        makePlan({ id: 'p1' }),
-        makePlan({ id: 'p2', planType: PlanType.PRATA }),
-      ]);
-
-      const plans = await service.findOtherPlans('u1');
-
-      expect(plans).toHaveLength(1);
-      expect(plans[0].planType).toBe(PlanType.PRATA);
-    });
-
-    it('devolve todos os planos da região quando o aluno não tem contrato', async () => {
-      const { service, studentRepository, planRepository } = makeService();
-      studentRepository.findOne.mockResolvedValue(
-        makeStudent({ contracts: [] }),
-      );
-      planRepository.find.mockResolvedValue([
-        makePlan({ id: 'p1' }),
-        makePlan({ id: 'p2' }),
-      ]);
-
-      await expect(service.findOtherPlans('u1')).resolves.toHaveLength(2);
     });
   });
 

@@ -11,7 +11,6 @@ import {
 import { StudentsService } from './students.service';
 import { CompactStudentDto } from './dto/compact-student.dto';
 import { StudentPlanDto } from './dto/student-plan.dto';
-import { PlanSummaryDto } from './dto/plan-summary.dto';
 import { PaymentHistoryDto } from './dto/payment-history.dto';
 import { StudentDetailDto } from './dto/student-detail.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
@@ -73,14 +72,6 @@ export class StudentsController {
     @Req() request: RequestWithUser,
   ): Promise<StudentPlanDto> {
     return await this.studentsService.findStudentPlan(request.user.sub);
-  }
-
-  @UseGuards(AuthGuard)
-  @Get('me/other-plans')
-  public async findOtherPlans(
-    @Req() request: RequestWithUser,
-  ): Promise<PlanSummaryDto[]> {
-    return await this.studentsService.findOtherPlans(request.user.sub);
   }
 
   @UseGuards(AuthGuard)

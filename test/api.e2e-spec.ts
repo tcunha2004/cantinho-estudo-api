@@ -337,30 +337,6 @@ describe('API (e2e)', () => {
       expect(plan.contractStatus).toBe('active');
     });
 
-    it('outros planos não repetem o plano atual', async () => {
-      const [plan, others] = await Promise.all([
-        request(server).get('/students/me/plan').set(auth(alunoToken)),
-        request(server).get('/students/me/other-plans').set(auth(alunoToken)),
-      ]);
-
-      const current = plan.body as {
-        planType: string;
-        frequency: number | null;
-      };
-      const list = others.body as {
-        planType: string;
-        frequency: number | null;
-      }[];
-
-      expect(
-        list.some(
-          (item) =>
-            item.planType === current.planType &&
-            item.frequency === current.frequency,
-        ),
-      ).toBe(false);
-    });
-
     it('histórico de pagamentos apura o valor pelas aulas do mês', async () => {
       const response = await request(server)
         .get('/students/me/payments')
