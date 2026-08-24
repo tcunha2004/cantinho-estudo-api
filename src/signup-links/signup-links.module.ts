@@ -6,11 +6,13 @@ import { SignupLinkEntity } from './entity/signup-link.entity';
 import { UserEntity } from '../users/entity/user.entity';
 import { HashPasswordPipe } from '../users/pipe/hash-password.pipe';
 import { RegionsModule } from '../regions/regions.module';
+import { SubjectsModule } from '../subjects/subjects.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([SignupLinkEntity, UserEntity]),
     RegionsModule,
+    SubjectsModule,
   ],
   controllers: [SignupLinksController],
   /* O pipe entra como provider porque o hash da senha acontece no service,

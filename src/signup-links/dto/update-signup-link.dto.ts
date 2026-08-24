@@ -38,7 +38,8 @@ export class SignupGuardianDto {
 /*
  * Salvamento de uma fase do formulário: tudo opcional, porque cada fase manda
  * só o que ela tem. A obrigatoriedade é cobrada no envio
- * (SignupLinksService.submit()), não aqui.
+ * (SignupLinksService.submit()), não aqui — e o que é obrigatório depende de o
+ * rascunho ser de aluno ou de professor.
  */
 export class UpdateSignupLinkDto {
   @IsOptional()
@@ -72,6 +73,18 @@ export class UpdateSignupLinkDto {
   @IsOptional()
   @IsUUID('4', { message: 'Plano inválido' })
   planId?: string | null;
+
+  /* Professor — apresentação dele, o mesmo texto de `teachers.bio`. */
+  @IsOptional()
+  @IsString({ message: 'Apresentação deve ser um texto' })
+  bio?: string | null;
+
+  /* Professor — matérias que ele leciona. */
+  @IsOptional()
+  @IsArray({ message: 'Matérias devem ser uma lista' })
+  @ArrayMinSize(1, { message: 'Informe ao menos uma matéria' })
+  @IsUUID('4', { each: true, message: 'Matéria inválida' })
+  subjectIds?: string[];
 
   @IsOptional()
   @IsArray({ message: 'Responsáveis devem ser uma lista' })

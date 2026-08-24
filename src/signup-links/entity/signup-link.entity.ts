@@ -6,12 +6,15 @@ import {
   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
-import { UserEntity } from '../../users/entity/user.entity';
+import { UserEntity, UserRole } from '../../users/entity/user.entity';
 import { RegionEntity } from '../../regions/entity/region.entity';
 import { PlanEntity } from '../../plans/entity/plan.entity';
 import { StudentEntity } from '../../students/entity/student.entity';
 import { SignupStatus } from '../enums/signup-status.enum';
 import { naiveTimestampTransformer } from '../../utils/date-range.util';
+
+/* De quem é o rascunho. Link nunca cria admin — ver SignupLinksService.approve(). */
+export type SignupRole = Exclude<UserRole, 'admin'>;
 
 /* Um responsável como o aluno preencheu — ver o comentário de `guardians`. */
 export interface SignupGuardian {
@@ -23,10 +26,11 @@ export interface SignupGuardian {
 }
 
 /*
- * Rascunho do cadastro de um aluno: o admin gera o link, o aluno preenche por
- * fases (cada fase é um PATCH aqui) e envia. Só na aprovação do admin isso
- * vira `users` + `students` + `guardians` + `student_contracts` + `payments`
- * — ver SignupLinksService.approve().
+ * Rascunho do cadastro de um aluno ou de um professor (ver `role`): o admin
+ * gera o link, a pessoa preenche por fases (cada fase é um PATCH aqui) e
+ * envia. Só na aprovação do admin isso vira `users` + `students` + `guardians`
+ * + `student_contracts` + `payments` (aluno) ou `users` + `teachers`
+ * (professor) — ver SignupLinksService.approve().
  *
  * Tudo é nulo porque a linha nasce vazia e vai sendo preenchida; a
  * obrigatoriedade é cobrada no envio, não no banco.
@@ -35,6 +39,15 @@ export interface SignupGuardian {
 export class SignupLinkEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  /*
+   * Aluno ou professor. As colunas `student_*` valem para os dois — é o
+   * nome/e-mail/telefone da pessoa, seja ela qual for; renomear a cadeia toda
+   * custaria mais do que este comentário. Já região, plano e responsáveis são
+   * só de aluno, e `bio`/`subject_ids` só de professor.
+   */
+  @Column({ name: 'role', type: 'varchar', default: 'student' })
+  role: SignupRole;
 
   @Column({
     name: 'status',
@@ -92,6 +105,17 @@ export class SignupLinkEntity {
    */
   @Column({ name: 'guardians', type: 'jsonb', nullable: true })
   guardians: SignupGuardian[] | null;
+
+  /* Apresentação do professor, como ele mesmo escreveu. */
+  @Column({ name: 'bio', type: 'text', nullable: true })
+  bio: string | null;
+
+  /*
+   * Matérias que o professor declarou lecionar, como ids soltos: é rascunho,
+   * então não vale uma tabela de junção — vira `teacher_subjects` na aprovação.
+   */
+  @Column({ name: 'subject_ids', type: 'jsonb', nullable: true })
+  subjectIds: string[] | null;
 
   /* Aluno gerado na aprovação — também é o que prova que o link já rodou. */
   @ManyToOne(() => StudentEntity, { nullable: true })

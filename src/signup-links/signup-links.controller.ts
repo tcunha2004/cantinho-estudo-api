@@ -23,17 +23,19 @@ import { Roles } from '../auth/decorator/roles.decorator';
 import { SIGNUP_DRAFT_THROTTLE } from '../config/throttler.config';
 
 /*
- * Metade das rotas daqui é pública de propósito: quem preenche o formulário é
- * um aluno que ainda não existe no sistema, então não há sessão para exigir. O
- * segredo é o próprio id do link (uuid v4), que só quem recebeu o link conhece.
+ * Metade das rotas daqui é pública de propósito: quem preenche o formulário —
+ * aluno ou professor — ainda não existe no sistema, então não há sessão para
+ * exigir. O segredo é o próprio id do link (uuid v4), que só quem recebeu o
+ * link conhece.
  */
 @Controller('signup-links')
 export class SignupLinksController {
   constructor(private readonly signupLinksService: SignupLinksService) {}
 
   /*
-   * O e-mail do aluno vem já aqui: é o que identifica o link e o que faz um
-   * link novo revogar o anterior do mesmo aluno.
+   * O e-mail vem já aqui: é o que identifica o link e o que faz um link novo
+   * revogar o anterior do mesmo e-mail. `role` diz se o cadastro é de aluno
+   * (padrão) ou de professor.
    */
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin')
@@ -61,17 +63,18 @@ export class SignupLinksController {
     return await this.signupLinksService.findWaiting();
   }
 
+  /* Devolve o id do aluno ou do professor criado, conforme o papel do link. */
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin')
   @Post(':id/approve')
   public async approve(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ApproveSignupDto,
-  ): Promise<{ studentId: string }> {
+  ): Promise<{ id: string }> {
     return await this.signupLinksService.approve(id, dto);
   }
 
-  /* Público — tela de cadastro do aluno. */
+  /* Público — tela de cadastro (o `role` do rascunho diz qual formulário é). */
   @Get(':id/form')
   public async findForm(
     @Param('id', ParseUUIDPipe) id: string,
@@ -80,7 +83,7 @@ export class SignupLinksController {
   }
 
   /*
-   * Público — salva a fase que o aluno acabou de preencher. Passa por bcrypt
+   * Público — salva a fase que a pessoa acabou de preencher. Passa por bcrypt
    * quando a fase traz senha, então tem limite próprio: sem ele, esta rota é
    * CPU da API de graça para qualquer um.
    */

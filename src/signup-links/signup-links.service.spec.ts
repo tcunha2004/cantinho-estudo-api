@@ -3,6 +3,8 @@ import { SignupStatus } from './enums/signup-status.enum';
 import { SignupLinkEntity } from './entity/signup-link.entity';
 import { UserEntity } from '../users/entity/user.entity';
 import { StudentEntity } from '../students/entity/student.entity';
+import { TeacherEntity } from '../teachers/entity/teacher.entity';
+import { SubjectEntity } from '../subjects/entity/subject.entity';
 import { GuardianEntity } from '../guardians/entity/guardian.entity';
 import { StudentContractEntity } from '../student-contracts/entity/student-contract.entity';
 import { PaymentEntity } from '../payments/entity/payment.entity';
@@ -17,10 +19,10 @@ import {
 } from '../utils/date-range.util';
 
 /*
- * O caminho de entrada de aluno novo. Duas coisas justificam o teste: a
- * aprovação é a única rotina do sistema que escreve em cinco tabelas de uma vez
- * (e em dinheiro), e o envio é a única barreira entre um formulário público e
- * um cadastro incompleto no banco.
+ * O caminho de entrada de gente nova — aluno e professor. Duas coisas
+ * justificam o teste: a aprovação de aluno é a única rotina do sistema que
+ * escreve em cinco tabelas de uma vez (e em dinheiro), e o envio é a única
+ * barreira entre um formulário público e um cadastro incompleto no banco.
  */
 
 const region = {
@@ -47,10 +49,11 @@ const guardian = {
   isFinancialResponsible: true,
 };
 
-/* Rascunho pronto para envio — os testes tiram uma peça de cada vez. */
+/* Rascunho de aluno pronto para envio — os testes tiram uma peça de cada vez. */
 function draft(overrides: Record<string, unknown> = {}) {
   return {
     id: 'link-1',
+    role: 'student',
     status: SignupStatus.PENDING,
     studentName: 'Ana Souza',
     studentEmail: 'ana@teste.com',
@@ -60,11 +63,30 @@ function draft(overrides: Record<string, unknown> = {}) {
     region,
     plan,
     guardians: [guardian],
+    bio: null,
+    subjectIds: null,
     submittedAt: null,
     /* Válido por padrão — quem testa prazo passa `expiresAt` no override. */
     expiresAt: addMinutesToNaive(nowNaive(), 60),
     ...overrides,
   };
+}
+
+/* O mesmo, para professor: sem região, plano nem responsáveis. */
+function teacherDraft(overrides: Record<string, unknown> = {}) {
+  return draft({
+    role: 'professor',
+    studentName: 'Carlos Lima',
+    studentEmail: 'carlos@teste.com',
+    studentPhone: null,
+    studentAddress: null,
+    region: null,
+    plan: null,
+    guardians: null,
+    bio: 'Licenciado em Matemática, 10 anos de sala de aula.',
+    subjectIds: ['sub-1'],
+    ...overrides,
+  });
 }
 
 function makeService() {
@@ -96,6 +118,13 @@ function makeService() {
     create: jest.fn((data: unknown) => data),
     save: jest.fn((data: unknown) => Promise.resolve(data)),
   };
+  const teachers = {
+    create: jest.fn((data: unknown) => data),
+    save: jest.fn((data: object) => Promise.resolve({ ...data, id: 't1' })),
+  };
+  const subjects = {
+    findBy: jest.fn().mockResolvedValue([{ id: 'sub-1', name: 'Matemática' }]),
+  };
 
   const byEntity = new Map<unknown, unknown>([
     [SignupLinkEntity, links],
@@ -104,6 +133,8 @@ function makeService() {
     [GuardianEntity, guardians],
     [StudentContractEntity, contracts],
     [PaymentEntity, payments],
+    [TeacherEntity, teachers],
+    [SubjectEntity, subjects],
   ]);
 
   const manager = { getRepository: jest.fn((entity) => byEntity.get(entity)) };
@@ -114,6 +145,9 @@ function makeService() {
     findPricing: jest.fn().mockResolvedValue([]),
     findPublicPricing: jest.fn().mockResolvedValue([]),
   };
+  const subjectsService = {
+    findAll: jest.fn().mockResolvedValue([{ id: 'sub-1', name: 'Matemática' }]),
+  };
   const hashPassword = {
     transform: jest.fn((value: string) => Promise.resolve(`hash:${value}`)),
   };
@@ -122,6 +156,7 @@ function makeService() {
     links as never,
     users as never,
     regionsService as never,
+    subjectsService as never,
     hashPassword as never,
     dataSource as never,
   );
@@ -135,7 +170,10 @@ function makeService() {
     guardians,
     contracts,
     payments,
+    teachers,
+    subjects,
     regionsService,
+    subjectsService,
     hashPassword,
   };
 }
@@ -155,10 +193,24 @@ describe('SignupLinksService', () => {
 
       expect(links.create).toHaveBeenCalledWith({
         status: SignupStatus.PENDING,
+        role: 'student',
         createdBy: { id: 'admin-1' },
         studentEmail: 'ana@teste.com',
         expiresAt: '2026-08-17T09:00:00',
       });
+    });
+
+    it('gera link de professor quando o admin pede', async () => {
+      const { service, links } = makeService();
+
+      await service.create('admin-1', {
+        studentEmail: 'carlos@teste.com',
+        role: 'professor',
+      });
+
+      expect(links.create).toHaveBeenCalledWith(
+        expect.objectContaining({ role: 'professor' }),
+      );
     });
 
     /* O caso do link perdido: o admin gera outro e o primeiro morre na hora. */
@@ -209,6 +261,7 @@ describe('SignupLinksService', () => {
 
       expect(form).toEqual({
         id: 'link-1',
+        role: 'student',
         studentName: 'Ana Souza',
         studentEmail: 'ana@teste.com',
         studentPhone: '(31) 90000-0000',
@@ -216,10 +269,30 @@ describe('SignupLinksService', () => {
         regionId: 'r1',
         planId: 'p1',
         guardians: [guardian],
+        bio: null,
+        subjectIds: null,
         hasPassword: true,
         regions: [{ id: 'r1' }],
+        subjects: [],
       });
       expect(JSON.stringify(form)).not.toContain('hash:senha123');
+    });
+
+    /* Cada papel só carrega a lista que usa. */
+    it('no link de professor devolve as matérias, não a tabela de preços', async () => {
+      const { service, links, regionsService } = makeService();
+      links.findOne.mockResolvedValue(teacherDraft());
+
+      await expect(service.findForm('link-1')).resolves.toEqual(
+        expect.objectContaining({
+          role: 'professor',
+          bio: 'Licenciado em Matemática, 10 anos de sala de aula.',
+          subjectIds: ['sub-1'],
+          subjects: [{ id: 'sub-1', name: 'Matemática' }],
+          regions: [],
+        }),
+      );
+      expect(regionsService.findPublicPricing).not.toHaveBeenCalled();
     });
 
     /* A tabela pública não pode carregar o que a escola paga ao professor. */
@@ -332,7 +405,7 @@ describe('SignupLinksService', () => {
 
     /* A tela bloqueia o avanço por fase, mas ela não é a autoridade. */
     it.each([
-      ['studentName', 'nome do aluno'],
+      ['studentName', 'nome'],
       ['studentEmail', 'e-mail'],
       ['studentPhone', 'telefone'],
       ['password', 'senha'],
@@ -360,6 +433,32 @@ describe('SignupLinksService', () => {
       await expect(service.submit('link-1')).rejects.toThrow(
         'Informe exatamente um responsável financeiro',
       );
+    });
+
+    it.each([
+      ['bio', 'apresentação'],
+      ['subjectIds', 'matérias'],
+    ])('recusa envio de professor sem %s', async (field, message) => {
+      const { service, links } = makeService();
+      links.findOne.mockResolvedValue(teacherDraft({ [field]: null }));
+
+      await expect(service.submit('link-1')).rejects.toThrow(
+        `Cadastro incompleto: falta ${message}`,
+      );
+      expect(links.update).not.toHaveBeenCalled();
+    });
+
+    /* Professor não tem telefone, região, plano nem responsáveis. */
+    it('aceita envio de professor sem os campos de aluno', async () => {
+      const { service, links } = makeService();
+      links.findOne.mockResolvedValue(teacherDraft());
+
+      await service.submit('link-1');
+
+      expect(links.update).toHaveBeenCalledWith('link-1', {
+        status: SignupStatus.WAITING,
+        submittedAt: expect.any(String) as string,
+      });
     });
 
     it('recusa e-mail que já existe', async () => {
@@ -402,11 +501,42 @@ describe('SignupLinksService', () => {
           validityMonths: null,
           guardians: [guardian],
           submittedAt: '2026-08-20 10:00:00',
+          role: 'student',
         },
       ]);
       expect(links.find).toHaveBeenCalledWith(
         expect.objectContaining({ where: { status: SignupStatus.WAITING } }),
       );
+    });
+
+    it('no cadastro de professor traz apresentação e matérias pelo nome', async () => {
+      const { service, links } = makeService();
+      links.find.mockResolvedValue([
+        teacherDraft({
+          status: SignupStatus.WAITING,
+          submittedAt: '2026-08-20 10:00:00',
+        }),
+      ]);
+
+      await expect(service.findWaiting()).resolves.toEqual([
+        expect.objectContaining({
+          role: 'professor',
+          studentName: 'Carlos Lima',
+          studentEmail: 'carlos@teste.com',
+          bio: 'Licenciado em Matemática, 10 anos de sala de aula.',
+          subjects: [{ id: 'sub-1', name: 'Matemática' }],
+        }),
+      ]);
+    });
+
+    /* Lista só de alunos não tem por que buscar a tabela de matérias. */
+    it('não busca matérias quando não há professor na lista', async () => {
+      const { service, links, subjectsService } = makeService();
+      links.find.mockResolvedValue([draft({ status: SignupStatus.WAITING })]);
+
+      await service.findWaiting();
+
+      expect(subjectsService.findAll).not.toHaveBeenCalled();
     });
   });
 
@@ -427,7 +557,7 @@ describe('SignupLinksService', () => {
 
       await expect(
         service.approve('link-1', { discountPercentage: '10' }),
-      ).resolves.toEqual({ studentId: 's1' });
+      ).resolves.toEqual({ id: 's1' });
 
       expect(users.create).toHaveBeenCalledWith({
         name: 'Ana Souza',
@@ -513,6 +643,40 @@ describe('SignupLinksService', () => {
       await expect(service.approve('link-1', {})).rejects.toThrow(
         'Cadastro não encontrado',
       );
+    });
+
+    it('cria usuário e professor, com as matérias que ele escolheu', async () => {
+      const { service, links, users, teachers, subjects, contracts, payments } =
+        makeService();
+      links.findOne.mockResolvedValue(
+        teacherDraft({ status: SignupStatus.WAITING }),
+      );
+
+      await expect(service.approve('link-1', {})).resolves.toEqual({
+        id: 't1',
+      });
+
+      expect(users.create).toHaveBeenCalledWith({
+        name: 'Carlos Lima',
+        email: 'carlos@teste.com',
+        password: 'hash:senha123',
+        role: 'professor',
+      });
+      expect(subjects.findBy).toHaveBeenCalled();
+      expect(teachers.create).toHaveBeenCalledWith({
+        user: expect.objectContaining({ id: 'u1' }) as object,
+        bio: 'Licenciado em Matemática, 10 anos de sala de aula.',
+        subjects: [{ id: 'sub-1', name: 'Matemática' }],
+        active: true,
+      });
+      /* Professor recebe por comissão de aula: sem contrato nem parcela. */
+      expect(contracts.create).not.toHaveBeenCalled();
+      expect(payments.create).not.toHaveBeenCalled();
+      expect(links.update).toHaveBeenCalledWith('link-1', {
+        status: SignupStatus.APPROVED,
+        approvedAt: expect.any(String) as string,
+        student: null,
+      });
     });
 
     /* Entre o envio e a aprovação alguém pode ter cadastrado o mesmo e-mail. */
