@@ -12,6 +12,7 @@ import { GuardiansModule } from './guardians/guardians.module';
 import { TeachersModule } from './teachers/teachers.module';
 import { RegionsModule } from './regions/regions.module';
 import { SubjectsModule } from './subjects/subjects.module';
+import { SignupLinksModule } from './signup-links/signup-links.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { SubjectsModule } from './subjects/subjects.module';
     TeachersModule,
     RegionsModule,
     SubjectsModule,
+    SignupLinksModule,
   ],
   providers: [
     {

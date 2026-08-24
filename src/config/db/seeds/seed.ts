@@ -42,7 +42,7 @@ const VILA_DA_SERRA_SLUG = 'vila-da-serra';
 
 /* Ordem inversa das dependências — usada no TRUNCATE */
 const TABLES = [
-  'invite_links',
+  'signup_links',
   'payments',
   'classes',
   'teacher_subjects',

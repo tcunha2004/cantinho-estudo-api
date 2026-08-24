@@ -12,7 +12,7 @@ import { PaymentStatus } from '../payments/enums/payment-status.enum';
 import { addMonthsToDate, todayNaive } from '../utils/date-range.util';
 
 /* Dia do vencimento das mensalidades — o mesmo usado pelos seeds. */
-const DUE_DAY = 10;
+export const DUE_DAY = 10;
 
 /* Valor monetário como o banco guarda: decimal(10,2) em string. */
 function money(value: number): string {
