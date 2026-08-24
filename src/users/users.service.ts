@@ -16,4 +16,12 @@ export class UsersService {
   ): Promise<UserEntity | null> {
     return await this.userRepository.findOne({ where: { email, role } });
   }
+
+  public async findById(id: string): Promise<UserEntity | null> {
+    return await this.userRepository.findOne({ where: { id } });
+  }
+
+  public async updatePassword(id: string, passwordHash: string): Promise<void> {
+    await this.userRepository.update({ id }, { password: passwordHash });
+  }
 }

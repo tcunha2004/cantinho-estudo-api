@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { UsersModule } from 'src/users/users.module';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { HashPasswordPipe } from 'src/users/pipe/hash-password.pipe';
 
 /* Chave de toda a autorização do sistema: 32 caracteres é o piso para não
  * valer a pena atacar o HMAC do token direto. */
@@ -32,12 +33,13 @@ export function resolveJwtSecret(configService: ConfigService): string {
       global: true,
       useFactory: (configService: ConfigService) => ({
         secret: resolveJwtSecret(configService),
-        signOptions: { expiresIn: '12h' },
+        signOptions: { expiresIn: '6h' },
       }),
       inject: [ConfigService],
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService],
+  /* O mesmo bcrypt do cadastro — usado na troca de senha, não como pipe de rota. */
+  providers: [AuthService, HashPasswordPipe],
 })
 export class AuthModule {}
