@@ -191,19 +191,34 @@ export class ClassesService {
   public async getUpcomingClassesByTeacher(
     userId: string,
   ): Promise<ClassEntity[]> {
-    return await this.classRepository.find({
-      where: {
-        status: ClassStatus.SCHEDULED,
-        scheduledAt: MoreThan(nowNaive()),
-        teacher: { user: { id: userId } },
-      },
-      relations: {
-        studentContract: { student: { user: true } },
-        teacher: { user: true },
-        subject: true,
-      },
-      order: { scheduledAt: 'ASC' },
-    });
+    return this.hideAmountCharged(
+      await this.classRepository.find({
+        where: {
+          status: ClassStatus.SCHEDULED,
+          scheduledAt: MoreThan(nowNaive()),
+          teacher: { user: { id: userId } },
+        },
+        relations: {
+          studentContract: { student: { user: true } },
+          teacher: { user: true },
+          subject: true,
+        },
+        order: { scheduledAt: 'ASC' },
+      }),
+    );
+  }
+
+  /*
+   * O professor não vê o que a escola cobra do aluno — a mesma regra que o
+   * `toDetailDto` aplica no modal de detalhes. Estas duas consultas devolvem a
+   * entidade crua, então o campo sai aqui, antes de virar resposta.
+   */
+  private hideAmountCharged(items: ClassEntity[]): ClassEntity[] {
+    for (const item of items) {
+      item.amountCharged = null;
+    }
+
+    return items;
   }
 
   /*
@@ -306,18 +321,20 @@ export class ClassesService {
     const { start, end } = getMonthRange(year, monthNumber);
     const now = nowNaive();
 
-    return await this.classRepository.find({
-      where: {
-        scheduledAt: Between(start, end < now ? end : now),
-        teacher: { user: { id: userId } },
-      },
-      relations: {
-        studentContract: { student: { user: true } },
-        teacher: { user: true },
-        subject: true,
-      },
-      order: { scheduledAt: 'DESC' },
-    });
+    return this.hideAmountCharged(
+      await this.classRepository.find({
+        where: {
+          scheduledAt: Between(start, end < now ? end : now),
+          teacher: { user: { id: userId } },
+        },
+        relations: {
+          studentContract: { student: { user: true } },
+          teacher: { user: true },
+          subject: true,
+        },
+        order: { scheduledAt: 'DESC' },
+      }),
+    );
   }
 
   /*

@@ -1,4 +1,8 @@
-import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { TokenExpiredError } from '@nestjs/jwt';
 import { AuthGuard } from './auth.guard';
@@ -35,19 +39,27 @@ describe('AuthGuard', () => {
 
   it('recusa esquema que não seja Bearer', async () => {
     await expect(
-      guard.canActivate(makeContext({ headers: { authorization: 'Basic abc' } })),
+      guard.canActivate(
+        makeContext({ headers: { authorization: 'Basic abc' } }),
+      ),
     ).rejects.toThrow(UnauthorizedException);
   });
 
   it('diferencia token expirado de token inválido', async () => {
-    verifyAsync.mockRejectedValueOnce(new TokenExpiredError('jwt expired', new Date()));
+    verifyAsync.mockRejectedValueOnce(
+      new TokenExpiredError('jwt expired', new Date()),
+    );
     await expect(
-      guard.canActivate(makeContext({ headers: { authorization: 'Bearer abc' } })),
+      guard.canActivate(
+        makeContext({ headers: { authorization: 'Bearer abc' } }),
+      ),
     ).rejects.toThrow('Token expirado');
 
     verifyAsync.mockRejectedValueOnce(new Error('malformado'));
     await expect(
-      guard.canActivate(makeContext({ headers: { authorization: 'Bearer abc' } })),
+      guard.canActivate(
+        makeContext({ headers: { authorization: 'Bearer abc' } }),
+      ),
     ).rejects.toThrow('Token inválido');
   });
 });
@@ -62,7 +74,9 @@ describe('RolesGuard', () => {
 
   it('libera o papel permitido', () => {
     expect(
-      makeGuard(['admin']).canActivate(makeContext({ user: { role: 'admin' } })),
+      makeGuard(['admin']).canActivate(
+        makeContext({ user: { role: 'admin' } }),
+      ),
     ).toBe(true);
   });
 

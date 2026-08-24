@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RegionEntity } from './entity/region.entity';
 import { PlanType } from '../plans/enums/plan-type.enum';
-import { RegionPricingDto } from './dto/region-pricing.dto';
+import {
+  PublicRegionPricingDto,
+  RegionPricingDto,
+} from './dto/region-pricing.dto';
 
 /* Ordem de exibição da tabela de preços — do mais completo ao mais simples */
 const PLAN_TYPE_ORDER: PlanType[] = [
@@ -53,5 +56,16 @@ export class RegionsService {
           validityMonths: plan.validityMonths,
         })),
     }));
+  }
+
+  /*
+   * A mesma tabela para a tela pública de cadastro, sem `classCommission` — o
+   * aluno escolhe plano por preço, não precisa saber (nem pode) quanto a escola
+   * paga ao professor. `/regions/pricing` é @Roles('admin') justamente por isso.
+   */
+  public async findPublicPricing(): Promise<PublicRegionPricingDto[]> {
+    return (await this.findPricing()).map(
+      ({ classCommission: _ignored, ...region }) => region,
+    );
   }
 }

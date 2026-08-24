@@ -4,7 +4,9 @@ import { AuthService } from './auth.service';
 
 function makeService() {
   const userService = { findByEmailAndRole: jest.fn() };
-  const jwtService = { signAsync: jest.fn().mockResolvedValue('token.jwt.aqui') };
+  const jwtService = {
+    signAsync: jest.fn().mockResolvedValue('token.jwt.aqui'),
+  };
   const service = new AuthService(userService as never, jwtService as never);
   return { service, userService, jwtService };
 }
@@ -49,9 +51,9 @@ describe('AuthService.login', () => {
 
     await service.login(credentials);
 
-    expect(
-      JSON.stringify(jwtService.signAsync.mock.calls[0][0]),
-    ).not.toContain('teste123');
+    expect(JSON.stringify(jwtService.signAsync.mock.calls[0][0])).not.toContain(
+      'teste123',
+    );
   });
 
   it('recusa senha errada', async () => {

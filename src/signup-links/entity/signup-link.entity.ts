@@ -104,6 +104,19 @@ export class SignupLinkEntity {
   })
   createdAt: string;
 
+  /*
+   * Prazo do link. Revogar é antecipar isto para agora — não existe coluna
+   * separada de "revogado" porque link revogado e link vencido morrem do mesmo
+   * jeito em `findPending()`.
+   */
+  @Column({
+    name: 'expires_at',
+    type: 'timestamp',
+    nullable: false,
+    transformer: naiveTimestampTransformer,
+  })
+  expiresAt: string;
+
   @Column({
     name: 'submitted_at',
     type: 'timestamp',

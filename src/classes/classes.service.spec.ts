@@ -53,7 +53,7 @@ const vila = {
 /* Query builder encadeável: guarda as chamadas e devolve o resultado dado. */
 function fakeQueryBuilder(result: unknown) {
   const builder: Record<string, unknown> = {
-    params: {} as Record<string, unknown>,
+    params: {},
   };
   for (const method of [
     'where',
@@ -351,7 +351,9 @@ describe('ClassesService', () => {
 
     it('professor inativo não agenda para si', async () => {
       const { service, teacherRepository } = makeService();
-      teacherRepository.findOne.mockResolvedValue(makeTeacher({ active: false }));
+      teacherRepository.findOne.mockResolvedValue(
+        makeTeacher({ active: false }),
+      );
 
       await expect(
         service.create(professor, {
@@ -365,7 +367,9 @@ describe('ClassesService', () => {
 
     it('admin também não agenda para professor inativo', async () => {
       const { service, teacherRepository } = makeService();
-      teacherRepository.findOne.mockResolvedValue(makeTeacher({ active: false }));
+      teacherRepository.findOne.mockResolvedValue(
+        makeTeacher({ active: false }),
+      );
 
       await expect(
         service.create(admin, {
@@ -1061,6 +1065,34 @@ describe('ClassesService', () => {
       );
       expect(passado).toContain('2026-07-01T00:00:00');
       expect(passado).toContain('2026-07-31T23:59:59');
+    });
+
+    /*
+     * O que a escola cobra do aluno é do admin. O `toDetailDto` já esconde no
+     * modal de detalhes; estas duas rotas devolvem a entidade crua, então é
+     * aqui que o campo tem que sair.
+     */
+    it('as listas do professor não trazem o valor cobrado do aluno', async () => {
+      const { service, classRepository } = makeService();
+      classRepository.find.mockResolvedValue([
+        { id: 'a1', commissionAmount: '25.00', amountCharged: '90.00' },
+      ]);
+
+      const upcoming = await service.getUpcomingClassesByTeacher('user-prof');
+      expect(upcoming[0].amountCharged).toBeNull();
+      /* A comissão é dele — essa fica. */
+      expect(upcoming[0].commissionAmount).toBe('25.00');
+
+      classRepository.find.mockResolvedValue([
+        { id: 'a2', commissionAmount: '35.00', amountCharged: '120.00' },
+      ]);
+
+      const history = await service.getRecentHistoryByTeacher(
+        'user-prof',
+        '2026-08',
+      );
+      expect(history[0].amountCharged).toBeNull();
+      expect(history[0].commissionAmount).toBe('35.00');
     });
 
     it('distribui as aulas nas semanas do mês e devolve null nas vazias', async () => {

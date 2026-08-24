@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { SignupLinkEntity, SignupGuardian } from './entity/signup-link.entity';
 import { SignupStatus } from './enums/signup-status.enum';
+import { CreateSignupLinkDto } from './dto/create-signup-link.dto';
 import { UpdateSignupLinkDto } from './dto/update-signup-link.dto';
 import { ApproveSignupDto } from './dto/approve-signup.dto';
 import { SignupFormDto } from './dto/signup-form.dto';
@@ -29,7 +30,11 @@ import {
 } from '../student-contracts/student-contracts.service';
 import { PaymentEntity } from '../payments/entity/payment.entity';
 import { PaymentStatus } from '../payments/enums/payment-status.enum';
-import { nowNaive, todayNaive } from '../utils/date-range.util';
+import {
+  addMinutesToNaive,
+  nowNaive,
+  todayNaive,
+} from '../utils/date-range.util';
 
 /* Rascunho com tudo o que a aprovação precisa — ver `ensureComplete`. */
 type CompleteSignupLink = SignupLinkEntity & {
@@ -41,6 +46,9 @@ type CompleteSignupLink = SignupLinkEntity & {
   plan: PlanEntity;
   guardians: SignupGuardian[];
 };
+
+/* Prazo do link de cadastro. */
+const LINK_TTL_DAYS = 7;
 
 /* Desconto como o banco guarda: decimal(5,2) em string. */
 function normalizeDiscount(value: string | null | undefined): string | null {
@@ -67,16 +75,49 @@ export class SignupLinksService {
     private readonly dataSource: DataSource,
   ) {}
 
-  /* Link em branco para o admin enviar ao aluno. */
-  public async create(adminUserId: string): Promise<{ id: string }> {
+  /*
+   * Link para o admin enviar ao aluno, válido por LINK_TTL_DAYS dias.
+   *
+   * Gerar um link para um aluno revoga os que ainda estavam pendentes para o
+   * mesmo e-mail: quando o admin gera de novo (link perdido, enviado para o
+   * endereço errado), o anterior deixa de servir na hora. O e-mail é o que
+   * identifica um aluno que ainda não existe — e é a mesma chave que
+   * `ensureEmailIsFree` guarda.
+   */
+  public async create(
+    adminUserId: string,
+    { studentEmail }: CreateSignupLinkDto,
+  ): Promise<{ id: string }> {
+    await this.ensureEmailIsFree(studentEmail);
+    await this.revokePendingFor(studentEmail);
+
     const link = await this.linkRepository.save(
       this.linkRepository.create({
         status: SignupStatus.PENDING,
         createdBy: { id: adminUserId },
+        studentEmail,
+        expiresAt: addMinutesToNaive(nowNaive(), LINK_TTL_DAYS * 24 * 60),
       }),
     );
 
     return { id: link.id };
+  }
+
+  /*
+   * Revogação manual, pelo admin. É antecipar o vencimento: `findPending()` já
+   * trata link vencido, então não há um segundo caminho de morte para manter.
+   */
+  public async revoke(id: string): Promise<void> {
+    await this.findPending(id);
+    await this.linkRepository.update(id, { expiresAt: nowNaive() });
+  }
+
+  /* Só os `pending`: cadastro já enviado não se revoga por gerar outro link. */
+  private async revokePendingFor(studentEmail: string): Promise<void> {
+    await this.linkRepository.update(
+      { studentEmail, status: SignupStatus.PENDING },
+      { expiresAt: nowNaive() },
+    );
   }
 
   /*
@@ -97,7 +138,7 @@ export class SignupLinksService {
       planId: link.plan?.id ?? null,
       guardians: link.guardians,
       hasPassword: link.password !== null,
-      regions: await this.regionsService.findPricing(),
+      regions: await this.regionsService.findPublicPricing(),
     };
   }
 
@@ -287,7 +328,11 @@ export class SignupLinksService {
     });
   }
 
-  /* Link que ainda aceita edição. 404 se não existe, 410 se já foi enviado. */
+  /*
+   * Link que ainda aceita edição. 404 se não existe, 410 se já foi enviado ou
+   * se venceu. Gargalo único de `findForm`, `updateDraft` e `submit`, então uma
+   * checagem de prazo aqui cobre os três.
+   */
   private async findPending(id: string): Promise<SignupLinkEntity> {
     const link = await this.linkRepository.findOne({
       where: { id },
@@ -300,6 +345,11 @@ export class SignupLinksService {
 
     if (link.status !== SignupStatus.PENDING) {
       throw new GoneException('Este cadastro já foi enviado');
+    }
+
+    /* Vencido ou revogado — do ponto de vista de quem abre o link, o mesmo. */
+    if (link.expiresAt <= nowNaive()) {
+      throw new GoneException('Este link de cadastro expirou');
     }
 
     return link;

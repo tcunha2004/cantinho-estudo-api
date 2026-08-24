@@ -1,4 +1,4 @@
-import { RegionPricingDto } from '../../regions/dto/region-pricing.dto';
+import { PublicRegionPricingDto } from '../../regions/dto/region-pricing.dto';
 import { SignupGuardian } from '../entity/signup-link.entity';
 
 /*
@@ -17,5 +17,6 @@ export class SignupFormDto {
   guardians: SignupGuardian[] | null;
   /* Se o aluno já definiu uma senha — o campo em si nunca volta. */
   hasPassword: boolean;
-  regions: RegionPricingDto[];
+  /* Sem `classCommission`: é o que a escola paga ao professor. */
+  regions: PublicRegionPricingDto[];
 }

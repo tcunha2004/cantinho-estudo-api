@@ -1,7 +1,8 @@
 import { ClassSerializerInterceptor, Module } from '@nestjs/common';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { UsersModule } from './users/users.module';
 import { DbConfigService } from './config/db/db.config.service';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MyExceptionFilter } from './filter/exception-filter';
 import { AuthModule } from './auth/auth.module';
@@ -13,10 +14,15 @@ import { TeachersModule } from './teachers/teachers.module';
 import { RegionsModule } from './regions/regions.module';
 import { SubjectsModule } from './subjects/subjects.module';
 import { SignupLinksModule } from './signup-links/signup-links.module';
+import { throttlerConfig } from './config/throttler.config';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    ThrottlerModule.forRootAsync({
+      useFactory: throttlerConfig,
+      inject: [ConfigService],
+    }),
     TypeOrmModule.forRootAsync({
       useClass: DbConfigService,
     }),
@@ -32,6 +38,11 @@ import { SignupLinksModule } from './signup-links/signup-links.module';
     SignupLinksModule,
   ],
   providers: [
+    /* Teto por IP em todas as rotas; as sensíveis apertam com @Throttle. */
+    {
+      provide: 'APP_GUARD',
+      useClass: ThrottlerGuard,
+    },
     {
       provide: 'APP_FILTER',
       useClass: MyExceptionFilter,

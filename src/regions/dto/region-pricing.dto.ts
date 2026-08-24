@@ -9,3 +9,9 @@ export class RegionPricingDto {
   classCommission: string;
   plans: PlanPricingDto[];
 }
+
+/*
+ * A mesma tabela, menos a comissão: a tela pública de cadastro precisa de
+ * preço e matrícula, mas não pode ver o que a escola paga ao professor.
+ */
+export type PublicRegionPricingDto = Omit<RegionPricingDto, 'classCommission'>;
