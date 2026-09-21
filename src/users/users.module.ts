@@ -1,16 +1,20 @@
 import { Module } from '@nestjs/common';
 import { UsersService } from './users.service';
+import { UsersController } from './users.controller';
 import { UserEntity } from './entity/user.entity';
+import { HashPasswordPipe } from './pipe/hash-password.pipe';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 /*
- * Sem controller de propósito: usuário não se cria por HTTP. Admin sai do
+ * O controller não cria usuário — isso continua fora do HTTP: admin sai do
  * `npm run user:create`, aluno sai da aprovação de um cadastro
- * (SignupLinksService.approve()).
+ * (SignupLinksService.approve()). O que ele expõe é a tela de senhas do admin:
+ * listar quem existe e redefinir a senha de quem esqueceu a sua.
  */
 @Module({
   imports: [TypeOrmModule.forFeature([UserEntity])],
-  providers: [UsersService],
+  controllers: [UsersController],
+  providers: [UsersService, HashPasswordPipe],
   exports: [UsersService],
 })
 export class UsersModule {}

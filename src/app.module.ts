@@ -14,6 +14,7 @@ import { TeachersModule } from './teachers/teachers.module';
 import { RegionsModule } from './regions/regions.module';
 import { SubjectsModule } from './subjects/subjects.module';
 import { SignupLinksModule } from './signup-links/signup-links.module';
+import { PlansModule } from './plans/plans.module';
 import { throttlerConfig } from './config/throttler.config';
 
 @Module({
@@ -36,6 +37,7 @@ import { throttlerConfig } from './config/throttler.config';
     RegionsModule,
     SubjectsModule,
     SignupLinksModule,
+    PlansModule,
   ],
   providers: [
     /* Teto por IP em todas as rotas; as sensíveis apertam com @Throttle. */

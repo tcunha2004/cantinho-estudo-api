@@ -68,9 +68,6 @@ const BLOCKING_STATUSES = [
   ClassStatus.NO_SHOW,
 ];
 
-/* Teto do intervalo da agenda — a tela pede no máximo uma semana por vez. */
-const MAX_RANGE_DAYS = 62;
-
 /* Valor monetário como o banco guarda: decimal(10,2) em string. */
 function money(value: number): string {
   return value.toFixed(2);
@@ -713,12 +710,6 @@ export class ClassesService {
       (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) /
         86_400_000 +
       1;
-
-    if (days > MAX_RANGE_DAYS) {
-      throw new BadRequestException(
-        `O intervalo da agenda não pode passar de ${MAX_RANGE_DAYS} dias`,
-      );
-    }
 
     return getNaiveDayRange(from, to);
   }

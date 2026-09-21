@@ -21,6 +21,8 @@ import { naiveTimestampTransformer } from '../../utils/date-range.util';
 @Index('idx_classes_status_scheduled_at', ['status', 'scheduledAt'])
 /* Acelera o cruzamento de aulas por professor (ganhos do mês) */
 @Index('idx_classes_teacher_id', ['teacher'])
+/* Índice simples em scheduled_at para filtro de intervalo de datas do admin */
+@Index('idx_classes_scheduled_at', ['scheduledAt'])
 export class ClassEntity {
   @PrimaryGeneratedColumn('uuid')
   id: string;

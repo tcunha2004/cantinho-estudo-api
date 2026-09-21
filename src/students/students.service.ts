@@ -24,6 +24,7 @@ import {
   addMonthsToDate,
   getMonthRange,
   nowNaive,
+  todayNaive,
 } from '../utils/date-range.util';
 import { CompactStudentDto, StudentStatus } from './dto/compact-student.dto';
 import { StudentPlanDto } from './dto/student-plan.dto';
@@ -381,8 +382,9 @@ export class StudentsService {
 
   /*
    * Troca o status de uma parcela — é como o admin fecha uma parcela depois que
-   * o aluno paga. `paidAt` acompanha o status (pago = agora, qualquer outro =
-   * nulo) em vez de vir do corpo: não existe registro retroativo hoje.
+   * o aluno paga. `paidAt` acompanha o status: nos status que não são "paga" vai
+   * a nulo, e em "paga" vale a data que o admin informar (pagamento retroativo)
+   * ou o momento atual, quando ele não informa nada.
    * O `studentId` entra no filtro de propósito: sem ele, um paymentId solto
    * deixaria mexer na parcela de outro aluno.
    *
@@ -410,7 +412,8 @@ export class StudentsService {
       payment.status !== PaymentStatus.PAID;
 
     payment.status = dto.status;
-    payment.paidAt = dto.status === PaymentStatus.PAID ? nowNaive() : null;
+    payment.paidAt =
+      dto.status === PaymentStatus.PAID ? this.resolvePaidAt(dto.paidAt) : null;
 
     const saved = await this.paymentRepository.save(payment);
 
@@ -428,6 +431,23 @@ export class StudentsService {
     }
 
     return await this.toPaymentDto(saved);
+  }
+
+  /* Data em que o pagamento foi feito. Sem informação do admin, é agora — o
+   * caso comum é fechar a parcela no dia. Data futura é recusada: parcela paga
+   * "amanhã" é erro de digitação, e isso aqui vira registro financeiro. */
+  private resolvePaidAt(paidAt?: string): string {
+    if (!paidAt) {
+      return nowNaive();
+    }
+
+    if (paidAt > todayNaive()) {
+      throw new BadRequestException(
+        'A data do pagamento não pode ser no futuro',
+      );
+    }
+
+    return `${paidAt}T00:00:00`;
   }
 
   /*

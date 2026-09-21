@@ -737,6 +737,75 @@ describe('StudentsService', () => {
       );
     });
 
+    it('grava a data informada em vez de "agora"', async () => {
+      const { service, paymentRepository, classRepository } = makeService();
+      const payment = makePayment();
+      mockFindOne(paymentRepository, payment);
+      paymentRepository.save.mockImplementation((saved: unknown) => saved);
+      classRepository.createQueryBuilder.mockReturnValue(
+        fakeQueryBuilder({ amount: '540', classesCount: '9' }),
+      );
+
+      const result = await service.updatePayment('s1', 'pay1', {
+        status: PaymentStatus.PAID,
+        paidAt: '2026-08-03',
+      });
+
+      expect(result.paidAt).toBe('2026-08-03T00:00:00');
+    });
+
+    it('sem data informada, continua carimbando o momento atual', async () => {
+      const { service, paymentRepository, classRepository } = makeService();
+      const payment = makePayment();
+      mockFindOne(paymentRepository, payment);
+      paymentRepository.save.mockImplementation((saved: unknown) => saved);
+      classRepository.createQueryBuilder.mockReturnValue(
+        fakeQueryBuilder({ amount: '540', classesCount: '9' }),
+      );
+
+      const result = await service.updatePayment('s1', 'pay1', {
+        status: PaymentStatus.PAID,
+      });
+
+      expect(result.paidAt).not.toBeNull();
+      expect(result.paidAt).not.toBe('2026-08-03T00:00:00');
+    });
+
+    it('data informada com status diferente de pago é ignorada', async () => {
+      const { service, paymentRepository, classRepository } = makeService();
+      const payment = makePayment({
+        status: PaymentStatus.PAID,
+        paidAt: '2026-08-10 09:00:00',
+      });
+      mockFindOne(paymentRepository, payment);
+      paymentRepository.save.mockImplementation((saved: unknown) => saved);
+      classRepository.createQueryBuilder.mockReturnValue(
+        fakeQueryBuilder({ amount: '540', classesCount: '9' }),
+      );
+
+      const result = await service.updatePayment('s1', 'pay1', {
+        status: PaymentStatus.PENDING,
+        paidAt: '2026-08-03',
+      });
+
+      expect(result.paidAt).toBeNull();
+    });
+
+    it('recusa data de pagamento no futuro', async () => {
+      const { service, paymentRepository } = makeService();
+      const payment = makePayment();
+      mockFindOne(paymentRepository, payment);
+
+      await expect(
+        service.updatePayment('s1', 'pay1', {
+          status: PaymentStatus.PAID,
+          paidAt: '2999-12-31',
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(paymentRepository.save).not.toHaveBeenCalled();
+    });
+
     describe('parcela do mês seguinte', () => {
       it('cria ao passar a ser paga: mesmo dia, mês seguinte, com a mensalidade do plano', async () => {
         const { service, paymentRepository, classRepository } = makeService();

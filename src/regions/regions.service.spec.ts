@@ -1,3 +1,4 @@
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { RegionsService } from './regions.service';
 import { PlanType } from '../plans/enums/plan-type.enum';
 import { Frequency } from '../plans/enums/frequency.enum';
@@ -94,5 +95,63 @@ describe('RegionsService.findPricing', () => {
         plans: [],
       },
     ]);
+  });
+});
+
+describe('RegionsService.update', () => {
+  function makeUpdatableService() {
+    const regionRepository = {
+      find: jest.fn(),
+      findOne: jest.fn(),
+      save: jest.fn(),
+    };
+    const service = new RegionsService(regionRepository as never);
+    return { service, regionRepository };
+  }
+
+  function makeRegion(over: Record<string, unknown> = {}) {
+    return {
+      id: 'r1',
+      name: 'Cantinho',
+      slug: 'cantinho',
+      enrollmentFee: '100.00',
+      classCommission: '25.00',
+      plans: [],
+      ...over,
+    };
+  }
+
+  it('normaliza as taxas para duas casas', async () => {
+    const { service, regionRepository } = makeUpdatableService();
+    regionRepository.findOne.mockResolvedValue(makeRegion());
+    regionRepository.save.mockImplementation((saved: unknown) => saved);
+
+    const result = await service.update('r1', {
+      enrollmentFee: '120',
+      classCommission: '27.5',
+    });
+
+    expect(result.enrollmentFee).toBe('120.00');
+    expect(result.classCommission).toBe('27.50');
+  });
+
+  it('recusa taxa negativa', async () => {
+    const { service, regionRepository } = makeUpdatableService();
+    regionRepository.findOne.mockResolvedValue(makeRegion());
+
+    await expect(
+      service.update('r1', { enrollmentFee: '-5' }),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(regionRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('região inexistente é 404', async () => {
+    const { service, regionRepository } = makeUpdatableService();
+    regionRepository.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.update('sumiu', { enrollmentFee: '1' }),
+    ).rejects.toThrow(NotFoundException);
   });
 });

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RegionEntity } from './entity/region.entity';
@@ -7,6 +7,8 @@ import {
   PublicRegionPricingDto,
   RegionPricingDto,
 } from './dto/region-pricing.dto';
+import { UpdateRegionDto } from './dto/update-region.dto';
+import { positiveMoney } from '../utils/money.util';
 
 /* Ordem de exibição da tabela de preços — do mais completo ao mais simples */
 const PLAN_TYPE_ORDER: PlanType[] = [
@@ -67,5 +69,55 @@ export class RegionsService {
     return (await this.findPricing()).map(
       ({ classCommission: _ignored, ...region }) => region,
     );
+  }
+
+  /*
+   * Taxa de matrícula e comissão por aula da região. Campo ausente fica como
+   * está. Reajustar a comissão não altera as aulas já encerradas: o valor da
+   * comissão é congelado na aula quando ela é finalizada
+   * (classes.service.ts), então o histórico de ganhos não se reescreve.
+   */
+  public async update(
+    id: string,
+    dto: UpdateRegionDto,
+  ): Promise<RegionPricingDto> {
+    const region = await this.regionRepository.findOne({
+      where: { id },
+      relations: { plans: true },
+    });
+
+    if (!region) {
+      throw new NotFoundException('Região não encontrada');
+    }
+
+    if (dto.enrollmentFee !== undefined) {
+      region.enrollmentFee = positiveMoney(dto.enrollmentFee, 'enrollmentFee');
+    }
+
+    if (dto.classCommission !== undefined) {
+      region.classCommission = positiveMoney(
+        dto.classCommission,
+        'classCommission',
+      );
+    }
+
+    const saved = await this.regionRepository.save(region);
+
+    return {
+      id: saved.id,
+      name: saved.name,
+      slug: saved.slug,
+      enrollmentFee: saved.enrollmentFee,
+      classCommission: saved.classCommission,
+      plans: (saved.plans ?? []).map((plan) => ({
+        id: plan.id,
+        planType: plan.planType,
+        frequency: plan.frequency,
+        monthlyPrice: plan.monthlyPrice,
+        hourPrice: plan.hourPrice,
+        classesCount: plan.classesCount,
+        validityMonths: plan.validityMonths,
+      })),
+    };
   }
 }
