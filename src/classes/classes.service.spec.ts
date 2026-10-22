@@ -92,6 +92,9 @@ function makeService() {
     createQueryBuilder: jest.fn(() => fakeQueryBuilder({ revenue: '0' })),
   };
   const regionRepository = { findOne: jest.fn() };
+  const whatsappService = {
+    notifyClass: jest.fn(() => Promise.resolve()),
+  };
 
   const service = new ClassesService(
     classRepository as never,
@@ -99,6 +102,7 @@ function makeService() {
     teacherRepository as never,
     paymentRepository as never,
     regionRepository as never,
+    whatsappService as never,
   );
 
   return {
@@ -108,6 +112,7 @@ function makeService() {
     teacherRepository,
     paymentRepository,
     regionRepository,
+    whatsappService,
   };
 }
 
@@ -137,6 +142,7 @@ function makeContract(over: Record<string, unknown> = {}) {
       id: 's1',
       active: true,
       region: cantinho,
+      phone: '31999999999',
       user: { id: 'user-aluno', name: 'João Silva' },
     },
     ...over,
@@ -897,6 +903,195 @@ describe('ClassesService', () => {
       await expect(service.reopen(admin, 'cl1')).rejects.toThrow(
         'A aula já está agendada',
       );
+    });
+  });
+
+  describe('aviso ao aluno por WhatsApp', () => {
+    const avisoDe = (over: Record<string, unknown> = {}): unknown =>
+      expect.objectContaining({
+        studentId: 's1',
+        studentPhone: '31999999999',
+        studentName: 'João Silva',
+        teacherName: 'Renata Lima',
+        subjectName: 'Matemática',
+        scheduledAt: '2026-08-10T14:00:00',
+        locationType: LocationType.SCHOOL,
+        ...over,
+      });
+
+    function setupCreate() {
+      const ctx = makeService();
+      ctx.teacherRepository.findOne.mockResolvedValue(makeTeacher());
+      ctx.contractRepository.findOne.mockResolvedValue(makeContract());
+      ctx.classRepository.save.mockResolvedValue({ id: 'cl1' });
+      ctx.classRepository.findOne.mockResolvedValue(makeClass());
+      return ctx;
+    }
+    const nova = {
+      studentId: 's1',
+      teacherId: 't1',
+      subjectId: 'sub1',
+      scheduledAt: '2026-08-10T14:00',
+      locationType: LocationType.SCHOOL,
+    };
+
+    it('aula criada manda a confirmação', async () => {
+      const { service, whatsappService } = setupCreate();
+      await service.create(admin, nova);
+      expect(whatsappService.notifyClass).toHaveBeenCalledTimes(1);
+      expect(whatsappService.notifyClass).toHaveBeenCalledWith(
+        'class_scheduled',
+        avisoDe(),
+      );
+    });
+
+    it('criar a aula não depende do WhatsApp dar certo', async () => {
+      const { service, whatsappService } = setupCreate();
+      whatsappService.notifyClass.mockRejectedValue(new Error('caiu'));
+      await expect(service.create(admin, nova)).resolves.toMatchObject({
+        id: 'cl1',
+      });
+    });
+
+    it('mudar data, professor, matéria ou local manda a alteração com os dados novos', async () => {
+      const { service, classRepository, teacherRepository, whatsappService } =
+        makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher());
+      classRepository.findOne
+        .mockResolvedValueOnce(makeClass())
+        .mockResolvedValueOnce(
+          makeClass({ scheduledAt: '2026-08-11T09:00:00' }),
+        );
+
+      await service.update(admin, 'cl1', { scheduledAt: '2026-08-11T09:00' });
+
+      expect(whatsappService.notifyClass).toHaveBeenCalledTimes(1);
+      expect(whatsappService.notifyClass).toHaveBeenCalledWith(
+        'class_changed',
+        avisoDe({ scheduledAt: '2026-08-11T09:00:00' }),
+      );
+    });
+
+    it.each([
+      ['professor', { teacher: makeTeacher({ id: 't2' }) }],
+      ['matéria', { subject: { id: 'sub2', name: 'Física' } }],
+      ['local', { locationType: LocationType.HOME }],
+    ])('mudar %s também conta como alteração', async (_campo, depois) => {
+      const { service, classRepository, teacherRepository, whatsappService } =
+        makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher());
+      classRepository.findOne
+        .mockResolvedValueOnce(makeClass())
+        .mockResolvedValueOnce(makeClass(depois));
+
+      await service.update(admin, 'cl1', {});
+
+      expect(whatsappService.notifyClass).toHaveBeenCalledWith(
+        'class_changed',
+        expect.anything(),
+      );
+    });
+
+    it('mudar só observação ou duração não avisa ninguém', async () => {
+      const { service, classRepository, teacherRepository, whatsappService } =
+        makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher());
+      classRepository.findOne
+        .mockResolvedValueOnce(makeClass())
+        .mockResolvedValueOnce(
+          makeClass({ notes: 'Levar o livro', durationMinutes: 90 }),
+        );
+
+      await service.update(admin, 'cl1', {
+        notes: 'Levar o livro',
+        durationMinutes: 90,
+      });
+
+      expect(whatsappService.notifyClass).not.toHaveBeenCalled();
+    });
+
+    it('trocar o aluno cancela para o antigo e confirma para o novo', async () => {
+      const { service, classRepository, teacherRepository, whatsappService } =
+        makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher());
+      const outroContrato = makeContract({
+        id: 'c2',
+        student: {
+          id: 's2',
+          active: true,
+          region: cantinho,
+          phone: '31977776666',
+          user: { id: 'user-maria', name: 'Maria Costa' },
+        },
+      });
+      classRepository.findOne
+        .mockResolvedValueOnce(makeClass())
+        .mockResolvedValueOnce(makeClass({ studentContract: outroContrato }));
+
+      await service.update(admin, 'cl1', {});
+
+      expect(whatsappService.notifyClass.mock.calls).toEqual([
+        ['class_cancelled', avisoDe()],
+        [
+          'class_scheduled',
+          avisoDe({
+            studentId: 's2',
+            studentPhone: '31977776666',
+            studentName: 'Maria Costa',
+          }),
+        ],
+      ]);
+    });
+
+    it('editar não depende do WhatsApp dar certo', async () => {
+      const { service, classRepository, teacherRepository, whatsappService } =
+        makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher());
+      whatsappService.notifyClass.mockRejectedValue(new Error('caiu'));
+      classRepository.findOne
+        .mockResolvedValueOnce(makeClass())
+        .mockResolvedValueOnce(makeClass({ locationType: LocationType.HOME }));
+
+      await expect(service.update(admin, 'cl1', {})).resolves.toMatchObject({
+        id: 'cl1',
+      });
+    });
+
+    it('aula cancelada manda o cancelamento', async () => {
+      const { service, classRepository, whatsappService } = makeService();
+      classRepository.findOne.mockResolvedValue(makeClass());
+
+      await service.cancel(admin, 'cl1');
+
+      expect(whatsappService.notifyClass).toHaveBeenCalledWith(
+        'class_cancelled',
+        avisoDe(),
+      );
+    });
+
+    it('cancelar não depende do WhatsApp dar certo', async () => {
+      const { service, classRepository, whatsappService } = makeService();
+      classRepository.findOne.mockResolvedValue(makeClass());
+      whatsappService.notifyClass.mockRejectedValue(new Error('caiu'));
+
+      await expect(service.cancel(admin, 'cl1')).resolves.toBeDefined();
+    });
+
+    it('concluir, marcar falta e reabrir não avisam ninguém', async () => {
+      const { service, classRepository, regionRepository, whatsappService } =
+        makeService();
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-10T20:00:00.000Z'));
+      regionRepository.findOne.mockResolvedValue(cantinho);
+      classRepository.findOne.mockResolvedValue(makeClass());
+
+      await service.complete(admin, 'cl1');
+      await service.markNoShow(admin, 'cl1');
+      classRepository.findOne.mockResolvedValue(
+        makeClass({ status: ClassStatus.COMPLETED }),
+      );
+      await service.reopen(admin, 'cl1');
+
+      expect(whatsappService.notifyClass).not.toHaveBeenCalled();
     });
   });
 

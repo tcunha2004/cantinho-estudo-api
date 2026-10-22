@@ -1,6 +1,7 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { UazapiError } from './uazapi.client';
 import { WhatsappService } from './whatsapp.service';
+import { LocationType } from '../classes/enums/location-type.enum';
 
 describe('WhatsappService', () => {
   let instances: {
@@ -331,6 +332,40 @@ describe('WhatsappService', () => {
     it('nunca rejeita, nem se o banco falhar', async () => {
       messages.save.mockRejectedValue(new Error('db down'));
       await expect(service.notifySignupApproved(ana)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('notifyClass', () => {
+    const aula = {
+      studentId: 's1',
+      studentPhone: '31999999999',
+      studentName: 'Ana Souza',
+      teacherName: 'Carlos Lima',
+      subjectName: 'Física',
+      scheduledAt: '2026-10-23T14:00:00',
+      locationType: LocationType.SCHOOL,
+    };
+
+    it('grava a situação da aula ligada ao aluno e envia o texto', async () => {
+      withInstance();
+      await service.notifyClass('class_cancelled', aula);
+      expect(messages.save.mock.calls[0][0]).toMatchObject({
+        status: 'pending',
+        kind: 'class_cancelled',
+        student: { id: 's1' },
+      });
+      expect(client.sendText).toHaveBeenCalledWith(
+        'tok-1',
+        '5531999999999',
+        'Ana, sua aula de Física com Carlos Lima em sex, 23/10 às 14:00 foi cancelada.',
+      );
+    });
+
+    it('nunca rejeita, nem se o banco falhar', async () => {
+      messages.save.mockRejectedValue(new Error('db down'));
+      await expect(
+        service.notifyClass('class_scheduled', aula),
+      ).resolves.toBeUndefined();
     });
   });
 

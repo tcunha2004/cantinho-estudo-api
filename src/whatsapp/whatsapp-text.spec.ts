@@ -1,8 +1,10 @@
 import {
+  classNoticeText,
   resolveAppUrl,
   signupApprovedText,
   toWhatsappNumber,
 } from './whatsapp-text';
+import { LocationType } from '../classes/enums/location-type.enum';
 
 describe('whatsapp-text', () => {
   it.each([
@@ -31,5 +33,53 @@ describe('whatsapp-text', () => {
     expect(resolveAppUrl({ get: () => 'https://app.x/' } as never)).toBe(
       'https://app.x',
     );
+  });
+
+  describe('avisos de aula', () => {
+    const aula = {
+      studentName: 'João Pedro Silva',
+      teacherName: 'Carlos Souza',
+      subjectName: 'Matemática',
+      scheduledAt: '2026-10-23T14:00:00',
+      locationType: LocationType.HOME,
+    };
+
+    it('confirmação com primeiro nome, data, matéria e local', () => {
+      expect(classNoticeText('class_scheduled', aula)).toBe(
+        'João, sua aula está confirmada com Carlos Souza!\n\n' +
+          'Data: sex, 23/10 às 14:00\n' +
+          'Matéria: Matemática\n' +
+          'Local: Casa',
+      );
+    });
+
+    it('alteração repete os campos já com os dados novos', () => {
+      expect(
+        classNoticeText('class_changed', {
+          ...aula,
+          locationType: LocationType.SCHOOL,
+        }),
+      ).toBe(
+        'João, sua aula com Carlos Souza foi alterada!\n\n' +
+          'Data: sex, 23/10 às 14:00\n' +
+          'Matéria: Matemática\n' +
+          'Local: Cantinho',
+      );
+    });
+
+    it('cancelamento em uma linha só', () => {
+      expect(classNoticeText('class_cancelled', aula)).toBe(
+        'João, sua aula de Matemática com Carlos Souza em sex, 23/10 às 14:00 foi cancelada.',
+      );
+    });
+
+    it('dia da semana não depende do fuso do servidor', () => {
+      expect(
+        classNoticeText('class_cancelled', {
+          ...aula,
+          scheduledAt: '2026-10-25T00:30:00',
+        }),
+      ).toContain('dom, 25/10 às 00:30');
+    });
   });
 });
