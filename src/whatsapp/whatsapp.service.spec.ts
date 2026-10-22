@@ -17,6 +17,13 @@ describe('WhatsappService', () => {
     disconnect: jest.Mock;
     sendText: jest.Mock;
   };
+  let messages: {
+    create: jest.Mock;
+    save: jest.Mock;
+    findOne: jest.Mock;
+    find: jest.Mock;
+    update: jest.Mock;
+  };
   let service: WhatsappService;
 
   const makeService = () => {
@@ -34,7 +41,20 @@ describe('WhatsappService', () => {
       disconnect: jest.fn(),
       sendText: jest.fn(),
     };
-    service = new WhatsappService(instances as never, client as never);
+    messages = {
+      create: jest.fn((d) => d),
+      save: jest.fn(async (d) => ({ id: 'm1', ...d })),
+      findOne: jest.fn(),
+      find: jest.fn().mockResolvedValue([]),
+      update: jest.fn(),
+    };
+    const config = { get: () => 'https://app.x' };
+    service = new WhatsappService(
+      instances as never,
+      client as never,
+      messages as never,
+      config as never,
+    );
   };
 
   const withInstance = () =>
@@ -223,6 +243,170 @@ describe('WhatsappService', () => {
         state: 'disconnected',
       });
       expect(client.disconnect).toHaveBeenCalledWith('tok-1');
+    });
+  });
+
+  describe('notifySignupApproved', () => {
+    const ana = { id: 's1', name: 'Ana Souza', phone: '(31) 99999-9999' };
+
+    it('grava pending antes de chamar a UAZAPI e marca sent depois', async () => {
+      withInstance();
+      await service.notifySignupApproved(ana);
+      expect(messages.save.mock.calls[0][0]).toMatchObject({
+        status: 'pending',
+        kind: 'signup_approved',
+        student: { id: 's1' },
+      });
+      expect(client.sendText).toHaveBeenCalledWith(
+        'tok-1',
+        '5531999999999',
+        'Olá, Ana Souza! Seu cadastro no Cantinho do Estudo foi aprovado. Acesse o sistema: https://app.x/login',
+      );
+      expect(messages.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({ status: 'sent', error: null }),
+      );
+    });
+
+    it('telefone inválido falha sem chamar a UAZAPI', async () => {
+      withInstance();
+      await service.notifySignupApproved({ ...ana, phone: '3199999' });
+      expect(client.sendText).not.toHaveBeenCalled();
+      expect(messages.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          status: 'failed',
+          error: 'Telefone inválido',
+        }),
+      );
+    });
+
+    it('sem instância gravada falha como não conectado', async () => {
+      await service.notifySignupApproved(ana);
+      expect(messages.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          status: 'failed',
+          error: 'WhatsApp não conectado',
+        }),
+      );
+    });
+
+    it('erro da UAZAPI fica registrado com a mensagem dela', async () => {
+      withInstance();
+      client.sendText.mockRejectedValue(
+        new UazapiError('O servidor do WhatsApp recusou esta mensagem.', 500),
+      );
+      await service.notifySignupApproved(ana);
+      expect(messages.save).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          status: 'failed',
+          error: 'O servidor do WhatsApp recusou esta mensagem.',
+        }),
+      );
+    });
+
+    it('nunca rejeita, nem se o banco falhar', async () => {
+      messages.save.mockRejectedValue(new Error('db down'));
+      await expect(service.notifySignupApproved(ana)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('resend', () => {
+    it('reenvia o texto gravado para o telefone ATUAL do aluno', async () => {
+      withInstance();
+      messages.findOne.mockResolvedValue({
+        id: 'm1',
+        phone: '3100',
+        text: 'texto antigo',
+        status: 'failed',
+        student: { id: 's1', phone: '31988887777' },
+      });
+      await expect(service.resend('m1')).resolves.toEqual({
+        id: 'm1',
+        status: 'sent',
+        error: null,
+      });
+      expect(client.sendText).toHaveBeenCalledWith(
+        'tok-1',
+        '5531988887777',
+        'texto antigo',
+      );
+    });
+
+    it('recusa mensagem que não é falha nem pending interrompida (clique duplo)', async () => {
+      messages.findOne.mockResolvedValue(null);
+      await expect(service.resend('m1')).rejects.toThrow(
+        'Esta mensagem não pode ser reenviada',
+      );
+      expect(client.sendText).not.toHaveBeenCalled();
+    });
+
+    it('busca só failed ou pending com mais de 5 minutos', async () => {
+      messages.findOne.mockResolvedValue(null);
+      await service.resend('m1').catch(() => undefined);
+      const where = messages.findOne.mock.calls[0][0].where;
+      expect(where).toEqual([
+        { id: 'm1', status: 'failed' },
+        { id: 'm1', status: 'pending', createdAt: expect.anything() },
+      ]);
+    });
+  });
+
+  describe('discard', () => {
+    it('marca discarded', async () => {
+      messages.findOne.mockResolvedValue({ id: 'm1', status: 'failed' });
+      await service.discard('m1');
+      expect(messages.update).toHaveBeenCalledWith('m1', {
+        status: 'discarded',
+      });
+    });
+
+    it('recusa o que não é falha', async () => {
+      messages.findOne.mockResolvedValue(null);
+      await expect(service.discard('m1')).rejects.toThrow(
+        'Esta mensagem não pode ser descartada',
+      );
+    });
+  });
+
+  describe('listFailures', () => {
+    it('pending interrompida aparece com o motivo próprio, com nome do aluno', async () => {
+      messages.find.mockResolvedValue([
+        {
+          id: 'm1',
+          phone: '31',
+          text: 't',
+          status: 'pending',
+          error: null,
+          createdAt: '2026-10-22T10:00:00',
+          student: { user: { name: 'Ana' } },
+        },
+        {
+          id: 'm2',
+          phone: '31',
+          text: 't',
+          status: 'failed',
+          error: 'Telefone inválido',
+          createdAt: '2026-10-22T09:00:00',
+          student: null,
+        },
+      ]);
+      await expect(service.listFailures()).resolves.toEqual([
+        {
+          id: 'm1',
+          studentName: 'Ana',
+          phone: '31',
+          text: 't',
+          error: 'Envio interrompido',
+          createdAt: '2026-10-22T10:00:00',
+        },
+        {
+          id: 'm2',
+          studentName: null,
+          phone: '31',
+          text: 't',
+          error: 'Telefone inválido',
+          createdAt: '2026-10-22T09:00:00',
+        },
+      ]);
     });
   });
 });
