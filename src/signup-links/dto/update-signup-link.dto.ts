@@ -8,9 +8,13 @@ import {
   IsString,
   IsUUID,
   Length,
+  Matches,
   MinLength,
   ValidateNested,
 } from 'class-validator';
+
+/* DDD + celular, só números: 31999999999. */
+const PHONE = /^\d{11}$/;
 
 export class SignupGuardianDto {
   @IsString({ message: 'Nome do responsável deve ser um texto' })
@@ -20,7 +24,9 @@ export class SignupGuardianDto {
   name: string;
 
   @IsString({ message: 'Telefone do responsável deve ser um texto' })
-  @MinLength(8, { message: 'Telefone do responsável inválido' })
+  @Matches(PHONE, {
+    message: 'Telefone do responsável deve ter 11 dígitos, com DDD',
+  })
   phone: string;
 
   @IsString({ message: 'CPF deve ser um texto' })
@@ -53,7 +59,7 @@ export class UpdateSignupLinkDto {
 
   @IsOptional()
   @IsString({ message: 'Telefone deve ser um texto' })
-  @MinLength(8, { message: 'Telefone inválido' })
+  @Matches(PHONE, { message: 'Telefone deve ter 11 dígitos, com DDD' })
   studentPhone?: string;
 
   @IsOptional()
