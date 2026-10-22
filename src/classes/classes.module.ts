@@ -7,6 +7,7 @@ import { StudentContractEntity } from '../student-contracts/entity/student-contr
 import { TeacherEntity } from '../teachers/entity/teacher.entity';
 import { PaymentEntity } from '../payments/entity/payment.entity';
 import { RegionEntity } from '../regions/entity/region.entity';
+import { WhatsappModule } from '../whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { RegionEntity } from '../regions/entity/region.entity';
       PaymentEntity,
       RegionEntity,
     ]),
+    WhatsappModule,
   ],
   controllers: [ClassesController],
   providers: [ClassesService],

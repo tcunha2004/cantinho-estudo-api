@@ -44,6 +44,8 @@ import { PlanType } from '../plans/enums/plan-type.enum';
 import { PaymentEntity } from '../payments/entity/payment.entity';
 import { PaymentStatus } from '../payments/enums/payment-status.enum';
 import { RegionEntity } from '../regions/entity/region.entity';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
+import { ClassNoticeKind } from '../whatsapp/whatsapp-text';
 
 /* Relações que a agenda e o detalhe da aula sempre precisam carregar. */
 const CLASS_RELATIONS = {
@@ -68,6 +70,9 @@ const BLOCKING_STATUSES = [
   ClassStatus.NO_SHOW,
 ];
 
+/* Dois meses cheios: cobre a visão mensal da agenda e o filtro do admin. */
+const MAX_AGENDA_DAYS = 62;
+
 /* Valor monetário como o banco guarda: decimal(10,2) em string. */
 function money(value: number): string {
   return value.toFixed(2);
@@ -86,6 +91,7 @@ export class ClassesService {
     private readonly paymentRepository: Repository<PaymentEntity>,
     @InjectRepository(RegionEntity)
     private readonly regionRepository: Repository<RegionEntity>,
+    private readonly whatsappService: WhatsappService,
   ) {}
 
   /* Aula cancelada não aconteceu nem vai acontecer: fora da contagem. */
@@ -471,7 +477,9 @@ export class ClassesService {
       }),
     );
 
-    return await this.findById(user, created.id);
+    const item = await this.findAccessibleClass(user, created.id);
+    this.notifyStudent('class_scheduled', item);
+    return this.toDetailDto(user, item);
   }
 
   public async update(
@@ -542,7 +550,9 @@ export class ClassesService {
       notes: dto.notes === undefined ? item.notes : dto.notes.trim() || null,
     });
 
-    return await this.findById(user, item.id);
+    const updated = await this.findAccessibleClass(user, item.id);
+    this.notifyChanges(item, updated);
+    return this.toDetailDto(user, updated);
   }
 
   /* Cancelamento não gera cobrança nem comissão: nada a congelar. */
@@ -554,6 +564,7 @@ export class ClassesService {
     await this.classRepository.update(item.id, {
       status: ClassStatus.CANCELLED,
     });
+    this.notifyStudent('class_cancelled', item);
 
     return await this.findById(user, item.id);
   }
@@ -686,6 +697,45 @@ export class ClassesService {
     return await this.findById(user, item.id);
   }
 
+  /*
+   * Só o que o aluno precisa saber gera aviso: data, professor, matéria e
+   * local. Observação e duração não. Trocar o aluno é cancelar para um e
+   * marcar para o outro.
+   */
+  private notifyChanges(before: ClassEntity, after: ClassEntity): void {
+    if (
+      before.studentContract.student.id !== after.studentContract.student.id
+    ) {
+      this.notifyStudent('class_cancelled', before);
+      this.notifyStudent('class_scheduled', after);
+      return;
+    }
+    if (
+      before.scheduledAt !== after.scheduledAt ||
+      before.teacher.id !== after.teacher.id ||
+      before.subject.id !== after.subject.id ||
+      before.locationType !== after.locationType
+    ) {
+      this.notifyStudent('class_changed', after);
+    }
+  }
+
+  /* Não espera o envio: marcar aula nunca falha nem demora por causa do WhatsApp. */
+  private notifyStudent(kind: ClassNoticeKind, item: ClassEntity): void {
+    const { student } = item.studentContract;
+    this.whatsappService
+      .notifyClass(kind, {
+        studentId: student.id,
+        studentPhone: student.phone,
+        studentName: student.user.name,
+        teacherName: item.teacher.user.name,
+        subjectName: item.subject.name,
+        scheduledAt: item.scheduledAt,
+        locationType: item.locationType,
+      })
+      .catch(() => undefined);
+  }
+
   private assertScheduled(item: ClassEntity, action: string): void {
     if (item.status !== ClassStatus.SCHEDULED) {
       throw new BadRequestException(
@@ -710,6 +760,11 @@ export class ClassesService {
       (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) /
         86_400_000 +
       1;
+    if (days > MAX_AGENDA_DAYS) {
+      throw new BadRequestException(
+        `O intervalo pode ter no máximo ${MAX_AGENDA_DAYS} dias`,
+      );
+    }
 
     return getNaiveDayRange(from, to);
   }

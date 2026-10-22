@@ -15,6 +15,9 @@ import {
   WhatsappResendResultDto,
 } from './dto/whatsapp-failure.dto';
 import {
+  ClassNotice,
+  ClassNoticeKind,
+  classNoticeText,
   resolveAppUrl,
   signupApprovedText,
   toWhatsappNumber,
@@ -122,22 +125,46 @@ export class WhatsappService {
     return await this.getStatus({ fresh: true });
   }
 
-  /*
-   * Nunca rejeita: quem chama é a aprovação do cadastro, que não pode falhar
-   * nem esperar por causa do WhatsApp. Qualquer erro vira log; se a linha
-   * `pending` chegou a ser gravada, ela reaparece como "interrompida".
-   */
   public async notifySignupApproved(student: {
     id: string;
     name: string;
     phone: string;
   }): Promise<void> {
+    await this.notifyStudent(
+      SIGNUP_APPROVED,
+      student,
+      signupApprovedText(student.name, this.appUrl),
+    );
+  }
+
+  /* Aula marcada, alterada ou cancelada: avisa só o aluno. */
+  public async notifyClass(
+    kind: ClassNoticeKind,
+    notice: ClassNotice & { studentId: string; studentPhone: string },
+  ): Promise<void> {
+    await this.notifyStudent(
+      kind,
+      { id: notice.studentId, phone: notice.studentPhone },
+      classNoticeText(kind, notice),
+    );
+  }
+
+  /*
+   * Nunca rejeita: quem chama (aprovação do cadastro, agenda de aulas) não
+   * pode falhar nem esperar por causa do WhatsApp. Qualquer erro vira log; se
+   * a linha `pending` chegou a ser gravada, ela reaparece como "interrompida".
+   */
+  private async notifyStudent(
+    kind: string,
+    student: { id: string; phone: string },
+    text: string,
+  ): Promise<void> {
     try {
       const message = await this.messageRepository.save(
         this.messageRepository.create({
-          kind: SIGNUP_APPROVED,
+          kind,
           phone: student.phone,
-          text: signupApprovedText(student.name, this.appUrl),
+          text,
           status: WhatsappMessageStatus.PENDING,
           student: { id: student.id },
         }),
@@ -145,7 +172,7 @@ export class WhatsappService {
       await this.deliver(message);
     } catch (error) {
       this.logger.error(
-        `Falha ao avisar o aluno ${student.id} por WhatsApp`,
+        `Falha ao avisar o aluno ${student.id} por WhatsApp (${kind})`,
         error instanceof Error ? error.stack : String(error),
       );
     }
