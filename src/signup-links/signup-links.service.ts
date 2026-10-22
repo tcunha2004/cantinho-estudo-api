@@ -24,6 +24,7 @@ import { StudentEntity } from '../students/entity/student.entity';
 import { TeacherEntity } from '../teachers/entity/teacher.entity';
 import { SubjectEntity } from '../subjects/entity/subject.entity';
 import { SubjectsService } from '../subjects/subjects.service';
+import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { GuardianEntity } from '../guardians/entity/guardian.entity';
 import { RegionEntity } from '../regions/entity/region.entity';
 import { RegionsService } from '../regions/regions.service';
@@ -100,6 +101,7 @@ export class SignupLinksService {
     private readonly subjectsService: SubjectsService,
     private readonly hashPassword: HashPasswordPipe,
     private readonly dataSource: DataSource,
+    private readonly whatsappService: WhatsappService,
   ) {}
 
   /*
@@ -312,48 +314,71 @@ export class SignupLinksService {
     id: string,
     dto: ApproveSignupDto,
   ): Promise<{ id: string }> {
-    return await this.dataSource.transaction(async (manager) => {
-      const found = await manager.getRepository(SignupLinkEntity).findOne({
-        where: { id },
-        relations: { region: true, plan: true },
-      });
+    const { result, notice } = await this.dataSource.transaction(
+      async (manager) => {
+        const found = await manager.getRepository(SignupLinkEntity).findOne({
+          where: { id },
+          relations: { region: true, plan: true },
+        });
 
-      if (!found) {
-        throw new NotFoundException('Cadastro não encontrado');
-      }
+        if (!found) {
+          throw new NotFoundException('Cadastro não encontrado');
+        }
 
-      if (found.status !== SignupStatus.WAITING) {
-        throw new BadRequestException(
-          'Este cadastro não está aguardando aprovação',
+        if (found.status !== SignupStatus.WAITING) {
+          throw new BadRequestException(
+            'Este cadastro não está aguardando aprovação',
+          );
+        }
+
+        const link = this.ensureComplete(found);
+
+        /* O e-mail pode ter sido cadastrado entre o envio e a aprovação. */
+        await this.ensureEmailIsFree(
+          link.studentEmail,
+          manager.getRepository(UserEntity),
         );
-      }
 
-      const link = this.ensureComplete(found);
+        const created =
+          link.role === 'professor'
+            ? await this.createTeacher(manager, link)
+            : await this.createStudent(
+                manager,
+                link,
+                normalizeDiscount(dto.discountPercentage),
+              );
 
-      /* O e-mail pode ter sido cadastrado entre o envio e a aprovação. */
-      await this.ensureEmailIsFree(
-        link.studentEmail,
-        manager.getRepository(UserEntity),
-      );
+        await manager.getRepository(SignupLinkEntity).update(id, {
+          status: SignupStatus.APPROVED,
+          approvedAt: nowNaive(),
+          /* `student_id` é do aluno; o professor não tem coluna equivalente. */
+          student: created.studentId ? { id: created.studentId } : null,
+        });
 
-      const created =
-        link.role === 'professor'
-          ? await this.createTeacher(manager, link)
-          : await this.createStudent(
-              manager,
-              link,
-              normalizeDiscount(dto.discountPercentage),
-            );
+        return {
+          result: { id: created.id },
+          /* Só aluno recebe aviso. */
+          notice:
+            link.role === 'professor'
+              ? null
+              : {
+                  id: created.id,
+                  name: link.studentName,
+                  phone: link.studentPhone,
+                },
+        };
+      },
+    );
 
-      await manager.getRepository(SignupLinkEntity).update(id, {
-        status: SignupStatus.APPROVED,
-        approvedAt: nowNaive(),
-        /* `student_id` é do aluno; o professor não tem coluna equivalente. */
-        student: created.studentId ? { id: created.studentId } : null,
-      });
-
-      return { id: created.id };
-    });
+    /*
+     * Depois do commit e sem esperar: o WhatsApp nunca atrasa nem derruba a
+     * aprovação. O `.catch` é a barreira contra uma rejeição solta derrubar o
+     * processo, mesmo com o contrato de "nunca rejeita" do envio.
+     */
+    if (notice) {
+      this.whatsappService.notifySignupApproved(notice).catch(() => undefined);
+    }
+    return result;
   }
 
   /*
