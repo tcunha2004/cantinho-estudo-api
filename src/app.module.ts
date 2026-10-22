@@ -15,6 +15,7 @@ import { RegionsModule } from './regions/regions.module';
 import { SubjectsModule } from './subjects/subjects.module';
 import { SignupLinksModule } from './signup-links/signup-links.module';
 import { PlansModule } from './plans/plans.module';
+import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { throttlerConfig } from './config/throttler.config';
 
 @Module({
@@ -38,6 +39,7 @@ import { throttlerConfig } from './config/throttler.config';
     SubjectsModule,
     SignupLinksModule,
     PlansModule,
+    WhatsappModule,
   ],
   providers: [
     /* Teto por IP em todas as rotas; as sensíveis apertam com @Throttle. */
