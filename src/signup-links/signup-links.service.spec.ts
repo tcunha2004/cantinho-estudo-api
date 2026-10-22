@@ -152,6 +152,10 @@ function makeService() {
     transform: jest.fn((value: string) => Promise.resolve(`hash:${value}`)),
   };
 
+  const whatsapp = {
+    notifySignupApproved: jest.fn().mockResolvedValue(undefined),
+  };
+
   const service = new SignupLinksService(
     links as never,
     users as never,
@@ -159,11 +163,14 @@ function makeService() {
     subjectsService as never,
     hashPassword as never,
     dataSource as never,
+    whatsapp as never,
   );
 
   return {
     service,
     dataSource,
+    manager,
+    whatsapp,
     links,
     users,
     students,
@@ -689,6 +696,80 @@ describe('SignupLinksService', () => {
         'Já existe um usuário com este e-mail',
       );
       expect(users.create).not.toHaveBeenCalled();
+    });
+
+    it('avisa o aluno no WhatsApp depois de aprovar', async () => {
+      const { service, links, whatsapp } = makeService();
+      links.findOne.mockResolvedValue(waiting());
+
+      await service.approve('link-1', {});
+
+      expect(whatsapp.notifySignupApproved).toHaveBeenCalledWith({
+        id: 's1',
+        name: 'Ana Souza',
+        phone: '(31) 90000-0000',
+      });
+    });
+
+    /* Promise rejeitada solta derruba o processo Node (unhandled rejection). */
+    it('aprova mesmo se o envio rejeitar, sem rejeição solta', async () => {
+      const { service, links, whatsapp } = makeService();
+      links.findOne.mockResolvedValue(waiting());
+      whatsapp.notifySignupApproved.mockRejectedValue(new Error('uazapi fora'));
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+
+      try {
+        await expect(service.approve('link-1', {})).resolves.toEqual({
+          id: 's1',
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+
+      expect(whatsapp.notifySignupApproved).toHaveBeenCalledTimes(1);
+      expect(unhandled).toEqual([]);
+    });
+
+    it('não avisa quando a aprovação falha', async () => {
+      const { service, links, whatsapp } = makeService();
+      links.findOne.mockResolvedValue(draft({ status: SignupStatus.APPROVED }));
+
+      await expect(service.approve('link-1', {})).rejects.toThrow();
+      expect(whatsapp.notifySignupApproved).not.toHaveBeenCalled();
+    });
+
+    it('não avisa na aprovação de professor', async () => {
+      const { service, links, whatsapp } = makeService();
+      links.findOne.mockResolvedValue(
+        teacherDraft({ status: SignupStatus.WAITING }),
+      );
+
+      await service.approve('link-1', {});
+
+      expect(whatsapp.notifySignupApproved).not.toHaveBeenCalled();
+    });
+
+    it('chama o WhatsApp só depois que a transação terminou', async () => {
+      const { service, links, whatsapp, dataSource, manager } = makeService();
+      links.findOne.mockResolvedValue(waiting());
+      const order: string[] = [];
+      dataSource.transaction.mockImplementation(
+        async (run: (m: unknown) => Promise<unknown>) => {
+          const result = await run(manager);
+          order.push('commit');
+          return result;
+        },
+      );
+      whatsapp.notifySignupApproved.mockImplementation(async () => {
+        order.push('whatsapp');
+      });
+
+      await service.approve('link-1', {});
+
+      expect(order).toEqual(['commit', 'whatsapp']);
     });
   });
 });

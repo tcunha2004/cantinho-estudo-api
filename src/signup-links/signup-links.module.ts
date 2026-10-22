@@ -7,12 +7,14 @@ import { UserEntity } from '../users/entity/user.entity';
 import { HashPasswordPipe } from '../users/pipe/hash-password.pipe';
 import { RegionsModule } from '../regions/regions.module';
 import { SubjectsModule } from '../subjects/subjects.module';
+import { WhatsappModule } from '../whatsapp/whatsapp.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([SignupLinkEntity, UserEntity]),
     RegionsModule,
     SubjectsModule,
+    WhatsappModule,
   ],
   controllers: [SignupLinksController],
   /* O pipe entra como provider porque o hash da senha acontece no service,
