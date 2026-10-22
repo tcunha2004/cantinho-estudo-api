@@ -37,6 +37,11 @@ const RETRYABLE = (
   { ...extra, status: WhatsappMessageStatus.PENDING, createdAt: STALE },
 ];
 
+/* A UAZAPI não reconhece mais o token gravado: a instância foi apagada lá. */
+const isTokenRefused = (error: unknown): boolean =>
+  error instanceof UazapiError &&
+  (error.httpStatus === 401 || error.httpStatus === 404);
+
 const status = (
   state: WhatsappState,
   extra: Partial<WhatsappStatusDto> = {},
@@ -94,14 +99,16 @@ export class WhatsappService {
     }
     this.cache = null;
     await this.viaUazapi(async () => {
-      let instance = await this.findInstance();
-      if (!instance) {
-        const token = await this.client.createInstance(INSTANCE_NAME);
-        instance = await this.instanceRepository.save(
-          this.instanceRepository.create({ token }),
-        );
+      const existing = await this.findInstance();
+      try {
+        const instance = existing ?? (await this.createInstance());
+        await this.client.connect(instance.token);
+      } catch (error) {
+        if (!existing || !isTokenRefused(error)) throw error;
+        /* Apagada do lado da UAZAPI desde a última consulta: recomeça do zero. */
+        await this.instanceRepository.delete(existing.id);
+        await this.client.connect((await this.createInstance()).token);
       }
-      await this.client.connect(instance.token);
     });
     return await this.getStatus({ fresh: true });
   }
@@ -247,15 +254,19 @@ export class WhatsappService {
       }
     } catch (error) {
       /* Instância apagada do lado da UAZAPI: sem isso a tela ficaria presa. */
-      if (
-        error instanceof UazapiError &&
-        (error.httpStatus === 401 || error.httpStatus === 404)
-      ) {
+      if (isTokenRefused(error)) {
         await this.instanceRepository.delete(instance.id);
         return status('disconnected');
       }
       return status('unreachable');
     }
+  }
+
+  private async createInstance(): Promise<WhatsappInstanceEntity> {
+    const token = await this.client.createInstance(INSTANCE_NAME);
+    return await this.instanceRepository.save(
+      this.instanceRepository.create({ token }),
+    );
   }
 
   private async findInstance(): Promise<WhatsappInstanceEntity | null> {

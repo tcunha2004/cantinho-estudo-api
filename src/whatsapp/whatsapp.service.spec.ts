@@ -211,6 +211,31 @@ describe('WhatsappService', () => {
       );
     });
 
+    it.each([401, 404])(
+      'instância apagada na UAZAPI (%i): apaga a gravada, cria outra e conecta',
+      async (httpStatus) => {
+        withInstance();
+        client.createInstance.mockResolvedValue('tok-2');
+        client.connect
+          .mockRejectedValueOnce(new UazapiError('x', httpStatus))
+          .mockResolvedValue(undefined);
+        client.getStatus.mockResolvedValue({
+          status: 'connecting',
+          qrcode: 'qr',
+          phone: null,
+          profileName: null,
+        });
+
+        await expect(service.connect()).resolves.toMatchObject({
+          state: 'connecting',
+        });
+
+        expect(instances.delete).toHaveBeenCalledWith('i1');
+        expect(client.createInstance).toHaveBeenCalledTimes(1);
+        expect(client.connect).toHaveBeenLastCalledWith('tok-2');
+      },
+    );
+
     it('erro da UAZAPI chega como 503 com a mensagem dela', async () => {
       withInstance();
       client.connect.mockRejectedValue(
@@ -337,6 +362,15 @@ describe('WhatsappService', () => {
         'Esta mensagem não pode ser reenviada',
       );
       expect(client.sendText).not.toHaveBeenCalled();
+    });
+
+    it('o corte de "interrompida" é feito no SQL, com o relógio do banco', async () => {
+      messages.findOne.mockResolvedValue(null);
+      await service.resend('m1').catch(() => undefined);
+      const stale = messages.findOne.mock.calls[0][0].where[1].createdAt;
+      expect(stale.getSql('"created_at"')).toBe(
+        `"created_at" < now() - interval '5 minutes'`,
+      );
     });
 
     it('busca só failed ou pending com mais de 5 minutos', async () => {
