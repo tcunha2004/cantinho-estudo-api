@@ -2,7 +2,8 @@ import { WhatsappMessageStatus } from '../enums/whatsapp-message-status.enum';
 
 export interface WhatsappFailureDto {
   id: string;
-  studentName: string | null;
+  /* Aluno ou professor dono da mensagem. */
+  recipientName: string | null;
   phone: string;
   text: string;
   /* `pending` interrompida aparece como 'Envio interrompido'. */

@@ -24,6 +24,9 @@ export class TeacherEntity {
   @JoinColumn({ name: 'user_id' })
   user: UserEntity;
 
+  @Column({ name: 'phone', length: 20, nullable: false })
+  phone: string;
+
   /* Apresentação do professor */
   @Column({ name: 'bio', type: 'text', nullable: true })
   bio: string | null;

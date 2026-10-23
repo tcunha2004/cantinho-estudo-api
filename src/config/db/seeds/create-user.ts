@@ -20,7 +20,7 @@ import { hashPassword, parseArgs, withDataSource } from './helpers';
  *
  * Flags só usadas por --role student:
  *   --region <slug>   região do aluno (padrão: a primeira região ativa)
- *   --phone  <texto>  telefone do aluno (padrão: (11) 90000-0000)
+ *   --phone  <texto>  telefone do aluno ou professor (padrão: (11) 90000-0000)
  */
 
 const ROLES: UserRole[] = ['admin', 'professor', 'student'];
@@ -35,7 +35,7 @@ Papéis: ${ROLES.join(' | ')}
 
 Opcionais (apenas para --role student):
   --region <slug>   região do aluno (padrão: primeira região ativa)
-  --phone <texto>   telefone do aluno (padrão: ${DEFAULT_PHONE})
+  --phone <texto>   telefone do aluno ou professor (padrão: ${DEFAULT_PHONE})
 
 Exemplos:
   npm run user:create -- --name "Ana Lima" --email ana@escola.com --password Senha123 --role admin
@@ -158,7 +158,12 @@ async function createUser(ds: DataSource, options: Options): Promise<void> {
     if (options.role === 'professor') {
       const teacherRepository = manager.getRepository(TeacherEntity);
       await teacherRepository.save(
-        teacherRepository.create({ user, bio: null, subjects: [] }),
+        teacherRepository.create({
+          user,
+          phone: options.phone ?? DEFAULT_PHONE,
+          bio: null,
+          subjects: [],
+        }),
       );
     }
 

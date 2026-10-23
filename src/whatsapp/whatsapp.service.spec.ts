@@ -273,7 +273,12 @@ describe('WhatsappService', () => {
   });
 
   describe('notifySignupApproved', () => {
-    const ana = { id: 's1', name: 'Ana Souza', phone: '(31) 99999-9999' };
+    const ana = {
+      role: 'student' as const,
+      id: 's1',
+      name: 'Ana Souza',
+      phone: '(31) 99999-9999',
+    };
 
     it('grava pending antes de chamar a UAZAPI e marca sent depois', async () => {
       withInstance();
@@ -290,6 +295,27 @@ describe('WhatsappService', () => {
       );
       expect(messages.save).toHaveBeenLastCalledWith(
         expect.objectContaining({ status: 'sent', error: null }),
+      );
+    });
+
+    it('no cadastro de professor liga a mensagem ao professor', async () => {
+      withInstance();
+      await service.notifySignupApproved({
+        role: 'professor',
+        id: 't1',
+        name: 'Carlos Lima',
+        phone: '(31) 97777-6666',
+      });
+      expect(messages.save.mock.calls[0][0]).toMatchObject({
+        status: 'pending',
+        kind: 'signup_approved',
+        student: null,
+        teacher: { id: 't1' },
+      });
+      expect(client.sendText).toHaveBeenCalledWith(
+        'tok-1',
+        '5531977776666',
+        'Olá, Carlos Lima! Seu cadastro no Cantinho do Estudo foi aprovado. Acesse o sistema: https://app.x/login',
       );
     });
 
@@ -391,6 +417,24 @@ describe('WhatsappService', () => {
       );
     });
 
+    it('reenvia para o telefone ATUAL do professor', async () => {
+      withInstance();
+      messages.findOne.mockResolvedValue({
+        id: 'm1',
+        phone: '3100',
+        text: 'texto antigo',
+        status: 'failed',
+        student: null,
+        teacher: { id: 't1', phone: '31977776666' },
+      });
+      await service.resend('m1');
+      expect(client.sendText).toHaveBeenCalledWith(
+        'tok-1',
+        '5531977776666',
+        'texto antigo',
+      );
+    });
+
     it('recusa mensagem que não é falha nem pending interrompida (clique duplo)', async () => {
       messages.findOne.mockResolvedValue(null);
       await expect(service.resend('m1')).rejects.toThrow(
@@ -437,7 +481,7 @@ describe('WhatsappService', () => {
   });
 
   describe('listFailures', () => {
-    it('pending interrompida aparece com o motivo próprio, com nome do aluno', async () => {
+    it('pending interrompida aparece com o motivo próprio, com nome do destinatário', async () => {
       messages.find.mockResolvedValue([
         {
           id: 'm1',
@@ -447,6 +491,17 @@ describe('WhatsappService', () => {
           error: null,
           createdAt: '2026-10-22T10:00:00',
           student: { user: { name: 'Ana' } },
+          teacher: null,
+        },
+        {
+          id: 'm3',
+          phone: '31',
+          text: 't',
+          status: 'failed',
+          error: null,
+          createdAt: '2026-10-22T09:30:00',
+          student: null,
+          teacher: { user: { name: 'Carlos' } },
         },
         {
           id: 'm2',
@@ -456,20 +511,29 @@ describe('WhatsappService', () => {
           error: 'Telefone inválido',
           createdAt: '2026-10-22T09:00:00',
           student: null,
+          teacher: null,
         },
       ]);
       await expect(service.listFailures()).resolves.toEqual([
         {
           id: 'm1',
-          studentName: 'Ana',
+          recipientName: 'Ana',
           phone: '31',
           text: 't',
           error: 'Envio interrompido',
           createdAt: '2026-10-22T10:00:00',
         },
         {
+          id: 'm3',
+          recipientName: 'Carlos',
+          phone: '31',
+          text: 't',
+          error: 'Falha no envio',
+          createdAt: '2026-10-22T09:30:00',
+        },
+        {
           id: 'm2',
-          studentName: null,
+          recipientName: null,
           phone: '31',
           text: 't',
           error: 'Telefone inválido',

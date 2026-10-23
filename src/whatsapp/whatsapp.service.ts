@@ -24,11 +24,15 @@ import {
 } from './whatsapp-text';
 import { WhatsappState, WhatsappStatusDto } from './dto/whatsapp-status.dto';
 import { UazapiClient, UazapiError } from './uazapi.client';
+import { SignupRole } from '../signup-links/entity/signup-link.entity';
 
 export const INSTANCE_NAME = 'cantinho-estudo';
 export const STATUS_CACHE_MS = 30_000;
 
 const SIGNUP_APPROVED = 'signup_approved';
+
+/* A quem a mensagem pertence — é por aí que o reenvio acha o telefone atual. */
+type Owner = { student?: { id: string }; teacher?: { id: string } };
 
 /* `pending` parado há mais de 5 min: o processo caiu no meio do envio. O
  * corte é feito no SQL para não misturar o relógio da aplicação com o do banco. */
@@ -125,15 +129,18 @@ export class WhatsappService {
     return await this.getStatus({ fresh: true });
   }
 
-  public async notifySignupApproved(student: {
+  public async notifySignupApproved(recipient: {
+    role: SignupRole;
     id: string;
     name: string;
     phone: string;
   }): Promise<void> {
-    await this.notifyStudent(
+    const ref = { id: recipient.id };
+    await this.notify(
       SIGNUP_APPROVED,
-      student,
-      signupApprovedText(student.name, this.appUrl),
+      recipient.role === 'professor' ? { teacher: ref } : { student: ref },
+      recipient.phone,
+      signupApprovedText(recipient.name, this.appUrl),
     );
   }
 
@@ -142,9 +149,10 @@ export class WhatsappService {
     kind: ClassNoticeKind,
     notice: ClassNotice & { studentId: string; studentPhone: string },
   ): Promise<void> {
-    await this.notifyStudent(
+    await this.notify(
       kind,
-      { id: notice.studentId, phone: notice.studentPhone },
+      { student: { id: notice.studentId } },
+      notice.studentPhone,
       classNoticeText(kind, notice),
     );
   }
@@ -154,25 +162,30 @@ export class WhatsappService {
    * pode falhar nem esperar por causa do WhatsApp. Qualquer erro vira log; se
    * a linha `pending` chegou a ser gravada, ela reaparece como "interrompida".
    */
-  private async notifyStudent(
+  private async notify(
     kind: string,
-    student: { id: string; phone: string },
+    owner: Owner,
+    phone: string,
     text: string,
   ): Promise<void> {
     try {
       const message = await this.messageRepository.save(
         this.messageRepository.create({
           kind,
-          phone: student.phone,
+          phone,
           text,
           status: WhatsappMessageStatus.PENDING,
-          student: { id: student.id },
+          student: owner.student ?? null,
+          teacher: owner.teacher ?? null,
         }),
       );
       await this.deliver(message);
     } catch (error) {
+      const who = owner.teacher
+        ? `o professor ${owner.teacher.id}`
+        : `o aluno ${owner.student?.id}`;
       this.logger.error(
-        `Falha ao avisar o aluno ${student.id} por WhatsApp (${kind})`,
+        `Falha ao avisar ${who} por WhatsApp (${kind})`,
         error instanceof Error ? error.stack : String(error),
       );
     }
@@ -182,12 +195,12 @@ export class WhatsappService {
   public async listFailures(): Promise<WhatsappFailureDto[]> {
     const messages = await this.messageRepository.find({
       where: RETRYABLE(),
-      relations: { student: { user: true } },
+      relations: { student: { user: true }, teacher: { user: true } },
       order: { createdAt: 'DESC' },
     });
     return messages.map((message) => ({
       id: message.id,
-      studentName: message.student?.user.name ?? null,
+      recipientName: (message.student ?? message.teacher)?.user.name ?? null,
       phone: message.phone,
       text: message.text,
       error:
@@ -199,19 +212,20 @@ export class WhatsappService {
   }
 
   /*
-   * Reenvia o texto gravado para o telefone ATUAL do aluno (o cadastro pode
+   * Reenvia o texto gravado para o telefone ATUAL do dono (o cadastro pode
    * ter sido corrigido). Só vale para o que ainda é reenviável: um segundo
    * clique encontra a linha já `sent` e é recusado.
    */
   public async resend(id: string): Promise<WhatsappResendResultDto> {
     const message = await this.messageRepository.findOne({
       where: RETRYABLE({ id }),
-      relations: { student: true },
+      relations: { student: true, teacher: true },
     });
     if (!message) {
       throw new BadRequestException('Esta mensagem não pode ser reenviada');
     }
-    if (message.student) message.phone = message.student.phone;
+    const owner = message.student ?? message.teacher;
+    if (owner) message.phone = owner.phone;
     const delivered = await this.deliver(message);
     return {
       id: delivered.id,

@@ -8,12 +8,12 @@ class WaitingSignupBaseDto {
   id: string;
   studentName: string;
   studentEmail: string;
+  studentPhone: string;
   submittedAt: string | null;
 }
 
 export class WaitingStudentSignupDto extends WaitingSignupBaseDto {
   role: 'student';
-  studentPhone: string;
   studentAddress: string | null;
   regionName: string;
   /* Taxa de matrícula da região — cobrada fora do sistema, aqui é informativa. */

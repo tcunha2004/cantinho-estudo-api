@@ -434,6 +434,7 @@ async function seed(ds: DataSource): Promise<void> {
   const teacher = await teacherRepository.save(
     teacherRepository.create({
       user: professorUser,
+      phone: '(31) 91111-1111',
       bio: 'Conta de teste para desenvolvimento.',
       subjects: [subjectByName.get('Matemática')!],
     }),

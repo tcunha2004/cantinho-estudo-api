@@ -72,13 +72,13 @@ function draft(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/* O mesmo, para professor: sem região, plano nem responsáveis. */
+/* O mesmo, para professor: sem endereço, região, plano nem responsáveis. */
 function teacherDraft(overrides: Record<string, unknown> = {}) {
   return draft({
     role: 'professor',
     studentName: 'Carlos Lima',
     studentEmail: 'carlos@teste.com',
-    studentPhone: null,
+    studentPhone: '(31) 97777-6666',
     studentAddress: null,
     region: null,
     plan: null,
@@ -443,6 +443,7 @@ describe('SignupLinksService', () => {
     });
 
     it.each([
+      ['studentPhone', 'telefone'],
       ['bio', 'apresentação'],
       ['subjectIds', 'matérias'],
     ])('recusa envio de professor sem %s', async (field, message) => {
@@ -455,7 +456,7 @@ describe('SignupLinksService', () => {
       expect(links.update).not.toHaveBeenCalled();
     });
 
-    /* Professor não tem telefone, região, plano nem responsáveis. */
+    /* Professor não tem endereço, região, plano nem responsáveis. */
     it('aceita envio de professor sem os campos de aluno', async () => {
       const { service, links } = makeService();
       links.findOne.mockResolvedValue(teacherDraft());
@@ -530,6 +531,7 @@ describe('SignupLinksService', () => {
           role: 'professor',
           studentName: 'Carlos Lima',
           studentEmail: 'carlos@teste.com',
+          studentPhone: '(31) 97777-6666',
           bio: 'Licenciado em Matemática, 10 anos de sala de aula.',
           subjects: [{ id: 'sub-1', name: 'Matemática' }],
         }),
@@ -672,6 +674,7 @@ describe('SignupLinksService', () => {
       expect(subjects.findBy).toHaveBeenCalled();
       expect(teachers.create).toHaveBeenCalledWith({
         user: expect.objectContaining({ id: 'u1' }) as object,
+        phone: '(31) 97777-6666',
         bio: 'Licenciado em Matemática, 10 anos de sala de aula.',
         subjects: [{ id: 'sub-1', name: 'Matemática' }],
         active: true,
@@ -705,6 +708,7 @@ describe('SignupLinksService', () => {
       await service.approve('link-1', {});
 
       expect(whatsapp.notifySignupApproved).toHaveBeenCalledWith({
+        role: 'student',
         id: 's1',
         name: 'Ana Souza',
         phone: '(31) 90000-0000',
@@ -741,7 +745,7 @@ describe('SignupLinksService', () => {
       expect(whatsapp.notifySignupApproved).not.toHaveBeenCalled();
     });
 
-    it('não avisa na aprovação de professor', async () => {
+    it('avisa o professor no WhatsApp depois de aprovar', async () => {
       const { service, links, whatsapp } = makeService();
       links.findOne.mockResolvedValue(
         teacherDraft({ status: SignupStatus.WAITING }),
@@ -749,7 +753,12 @@ describe('SignupLinksService', () => {
 
       await service.approve('link-1', {});
 
-      expect(whatsapp.notifySignupApproved).not.toHaveBeenCalled();
+      expect(whatsapp.notifySignupApproved).toHaveBeenCalledWith({
+        role: 'professor',
+        id: 't1',
+        name: 'Carlos Lima',
+        phone: '(31) 97777-6666',
+      });
     });
 
     it('chama o WhatsApp só depois que a transação terminou', async () => {
