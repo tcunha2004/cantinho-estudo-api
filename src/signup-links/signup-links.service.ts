@@ -48,13 +48,13 @@ import {
 type CompleteSignupLink = SignupLinkEntity & {
   studentName: string;
   studentEmail: string;
+  studentPhone: string;
   password: string;
 };
 
 /* Rascunho de aluno pronto para aprovação. */
 type CompleteStudentLink = CompleteSignupLink & {
   role: 'student';
-  studentPhone: string;
   region: RegionEntity;
   plan: PlanEntity;
   guardians: SignupGuardian[];
@@ -293,6 +293,7 @@ export class SignupLinksService {
       id: link.id,
       studentName: link.studentName,
       studentEmail: link.studentEmail,
+      studentPhone: link.studentPhone,
       bio: link.bio,
       /* Matéria apagada depois do envio simplesmente não aparece. */
       subjects: link.subjectIds.flatMap((subjectId) => {
@@ -357,15 +358,12 @@ export class SignupLinksService {
 
         return {
           result: { id: created.id },
-          /* Só aluno recebe aviso. */
-          notice:
-            link.role === 'professor'
-              ? null
-              : {
-                  id: created.id,
-                  name: link.studentName,
-                  phone: link.studentPhone,
-                },
+          notice: {
+            role: link.role,
+            id: created.id,
+            name: link.studentName,
+            phone: link.studentPhone,
+          },
         };
       },
     );
@@ -375,9 +373,7 @@ export class SignupLinksService {
      * aprovação. O `.catch` é a barreira contra uma rejeição solta derrubar o
      * processo, mesmo com o contrato de "nunca rejeita" do envio.
      */
-    if (notice) {
-      this.whatsappService.notifySignupApproved(notice).catch(() => undefined);
-    }
+    this.whatsappService.notifySignupApproved(notice).catch(() => undefined);
     return result;
   }
 
@@ -479,6 +475,7 @@ export class SignupLinksService {
     const teacher = await manager.getRepository(TeacherEntity).save(
       manager.getRepository(TeacherEntity).create({
         user,
+        phone: link.studentPhone,
         bio: link.bio,
         subjects,
         active: true,
@@ -531,7 +528,6 @@ export class SignupLinksService {
 
   private ensureStudentComplete(link: SignupLinkEntity): CompleteStudentLink {
     this.ensureFilled(link, [
-      [link.studentPhone, 'telefone'],
       [link.region, 'região'],
       [link.plan, 'plano'],
       [link.guardians?.length ? link.guardians : null, 'responsáveis'],
@@ -559,7 +555,7 @@ export class SignupLinksService {
     return link as CompleteTeacherLink;
   }
 
-  /* Nome, e-mail e senha valem para os dois papéis; o resto vem por parâmetro. */
+  /* Nome, e-mail, telefone e senha valem para os dois papéis; o resto vem por parâmetro. */
   private ensureFilled(
     link: SignupLinkEntity,
     extra: [unknown, string][],
@@ -567,6 +563,7 @@ export class SignupLinksService {
     const missing = [
       [link.studentName, 'nome'],
       [link.studentEmail, 'e-mail'],
+      [link.studentPhone, 'telefone'],
       [link.password, 'senha'],
       ...extra,
     ].find(([value]) => !value)?.[1] as string | undefined;

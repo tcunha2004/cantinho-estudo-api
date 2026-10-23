@@ -20,6 +20,11 @@ export class UpdateTeacherDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(20)
+  phone?: string;
+
+  @IsOptional()
+  @IsString()
   bio?: string | null;
 
   @IsOptional()

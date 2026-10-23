@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { StudentEntity } from '../../students/entity/student.entity';
+import { TeacherEntity } from '../../teachers/entity/teacher.entity';
 import { WhatsappMessageStatus } from '../enums/whatsapp-message-status.enum';
 import { naiveTimestampTransformer } from '../../utils/date-range.util';
 
@@ -49,6 +50,11 @@ export class WhatsappMessageEntity {
   @ManyToOne(() => StudentEntity, { nullable: true })
   @JoinColumn({ name: 'student_id' })
   student: StudentEntity | null;
+
+  /* Cadastro de professor aprovado; aluno e professor nunca vêm juntos. */
+  @ManyToOne(() => TeacherEntity, { nullable: true })
+  @JoinColumn({ name: 'teacher_id' })
+  teacher: TeacherEntity | null;
 
   @CreateDateColumn({
     name: 'created_at',

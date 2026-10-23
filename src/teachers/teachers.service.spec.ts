@@ -46,6 +46,7 @@ function makeService() {
 function makeTeacher(over: Record<string, unknown> = {}) {
   return {
     id: 't1',
+    phone: '31977776666',
     bio: 'Licenciada em Matemática',
     active: true,
     user: { id: 'u1', name: 'Renata Lima', email: 'renata@teste.com' },
@@ -71,6 +72,7 @@ describe('TeachersService', () => {
         id: 't1',
         name: 'Renata Lima',
         email: 'renata@teste.com',
+        phone: '31977776666',
         bio: 'Licenciada em Matemática',
         active: true,
         subjects: [{ id: 'sub1', name: 'Matemática' }],
@@ -110,6 +112,18 @@ describe('TeachersService', () => {
         bio: null,
         active: false,
       });
+    });
+
+    it('telefone vai para o professor', async () => {
+      const { service, teacherRepository, userRepository } = makeService();
+      teacherRepository.findOne.mockResolvedValue(makeTeacher());
+
+      await service.update('t1', { phone: '31988887777' });
+
+      expect(teacherRepository.update).toHaveBeenCalledWith('t1', {
+        phone: '31988887777',
+      });
+      expect(userRepository.update).not.toHaveBeenCalled();
     });
 
     it('substitui a lista de matérias quando subjectIds vem no dto', async () => {
@@ -152,7 +166,9 @@ describe('TeachersService', () => {
     it('bio e matérias no mesmo dto: a bio não é desfeita pelo save das matérias', async () => {
       const { service, teacherRepository, subjectRepository } = makeService();
       teacherRepository.findOne.mockResolvedValue(makeTeacher());
-      subjectRepository.find.mockResolvedValue([{ id: 'sub2', name: 'Física' }]);
+      subjectRepository.find.mockResolvedValue([
+        { id: 'sub2', name: 'Física' },
+      ]);
 
       await service.update('t1', { bio: 'Bio nova', subjectIds: ['sub2'] });
 
@@ -160,7 +176,10 @@ describe('TeachersService', () => {
         bio: 'Bio nova',
       });
       /* O save das matérias não pode carregar coluna nenhuma da entidade antiga. */
-      const salvo = teacherRepository.save.mock.calls[0][0] as Record<string, unknown>;
+      const salvo = teacherRepository.save.mock.calls[0][0] as Record<
+        string,
+        unknown
+      >;
       expect(Object.keys(salvo).sort()).toEqual(['id', 'subjects']);
     });
 
@@ -258,7 +277,9 @@ describe('TeachersService', () => {
 
     it('devolve totais zerados quando não há professor', async () => {
       const { service, teacherRepository } = makeService();
-      teacherRepository.createQueryBuilder.mockReturnValue(fakeQueryBuilder([]));
+      teacherRepository.createQueryBuilder.mockReturnValue(
+        fakeQueryBuilder([]),
+      );
 
       await expect(
         service.getAllTeachersEarningsByMonth('2026-08'),

@@ -55,6 +55,7 @@ export class TeachersService {
       id: teacher.id,
       name: teacher.user.name,
       email: teacher.user.email,
+      phone: teacher.phone,
       bio: teacher.bio,
       active: teacher.active,
       subjects: teacher.subjects.map((subject) => ({
@@ -82,7 +83,7 @@ export class TeachersService {
       throw new NotFoundException('Professor não encontrado');
     }
 
-    const { name, email, bio, subjectIds, active } = dto;
+    const { name, email, phone, bio, subjectIds, active } = dto;
 
     if (name !== undefined || email !== undefined) {
       await this.userRepository.update(teacher.user.id, {
@@ -91,8 +92,9 @@ export class TeachersService {
       });
     }
 
-    if (bio !== undefined || active !== undefined) {
+    if (phone !== undefined || bio !== undefined || active !== undefined) {
       await this.teacherRepository.update(id, {
+        ...(phone !== undefined ? { phone } : {}),
         ...(bio !== undefined ? { bio } : {}),
         ...(active !== undefined ? { active } : {}),
       });
@@ -105,7 +107,7 @@ export class TeachersService {
       /*
        * Salva só o id e as matérias. Salvar a entidade carregada no início do
        * método reescreveria as colunas com os valores de antes do update acima
-       * — bio e active voltariam ao que eram.
+       * — telefone, bio e active voltariam ao que eram.
        */
       await this.teacherRepository.save({ id, subjects });
     }
